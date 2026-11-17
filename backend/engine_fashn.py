@@ -471,9 +471,22 @@ def compose_tryon_fashn(
                             _s1 = _inpaint_fn(_rgb_result, ghost_full, exclude_mask=core_full)
                             _resid = _resid_fn(_s1, _ref_matched, keep_full, core_full, stroke_mask=ghost_full)
                             if _resid is not None and np.asarray(_resid).max() > 0:
-                                _rgb_result = reapply_garment_detail(
+                                # 兜底内容局部锚定: 全局匹配按整件布料中位
+                                # (含深色下摆 57-96)锚定; 兜底块落在亮胸口
+                                # (185-195)时贴暗布料 = 深色斑块(r13 GPU
+                                # 视觉验收"贴上去/整体下移")
+                                from preserve_refit import anchor_ref_local as _anchor_fn
+
+                                _ref_resid = _anchor_fn(
                                     _s1,
                                     _ref_matched,
+                                    keep_full,
+                                    _resid,
+                                    exclude_masks=[core_full, ghost_full],
+                                )
+                                _rgb_result = reapply_garment_detail(
+                                    _s1,
+                                    _ref_resid,
                                     _resid,
                                     pattern_lock=True,
                                     ref_alpha=alpha_full,
@@ -490,10 +503,22 @@ def compose_tryon_fashn(
                     # 核心场贴回参考混合: 白墨笔触保持原样(客观亮色), 场内
                     # SKU 衣料像素换色调匹配版 —— 整场恒等会把凸包里的亮
                     # 衣料(198+)拍上暗衣身(96), 印花一圈发光。
+                    # 布料底再局部锚定到 gen 贴回区周边净布料: 全局匹配的
+                    # 暗布料(94)贴亮胸口(185) = 413x300 深色矩形, "衣服
+                    # 像贴上去的/整体下移/衣领断层"(r13 GPU 视觉验收);
+                    # 笔触保持取自原始参考不受影响。
                     try:
+                        from preserve_refit import anchor_ref_local as _anchor_fn
                         from preserve_refit import blend_core_ref_tone as _blend_fn
 
-                        _core_ref = _blend_fn(cloth_ref_full, core_full, _ref_matched)
+                        _ref_local = _anchor_fn(
+                            _rgb_result,
+                            _ref_matched,
+                            keep_full,
+                            core_full,
+                            exclude_masks=[ghost_full],
+                        )
+                        _core_ref = _blend_fn(cloth_ref_full, core_full, _ref_local)
                     except Exception:
                         logger.exception("FASHN core ref blend failed; using raw ref")
                         _core_ref = cloth_ref_full

@@ -579,32 +579,160 @@ def _coerce_mask_to_img(mask: np.ndarray | Image.Image, shape: tuple[int, int]) 
 def _nearest_fabric_color(arr_f: np.ndarray, clean: np.ndarray) -> np.ndarray:
     """每像素**最近**净布料像素颜色(粗分辨率 Voronoi 近邻色传播)。
 
-    cv2 distanceTransform 的 DIST_LABEL_PIXEL 在 cv2 5.x 标签语义失效
-    (实测恒 0), 不依赖它: 1/8 粗尺度上净布料色掩蔽膨胀外扩(逐 1px
-    直到全覆盖 —— 大片密集领地中心距净布料可 >64 粗像素), 最近邻
-    插值回原分辨率(基色采样精度 ±8px, 对平滑布料渐变足够)。
+    全程纯 numpy 实现, 语义必须跨机一致: 沙箱 cv2 5.0.0 非真
+    OpenCV(DIST_LABEL_PIXEL 标签实测恒 0; resize 会压掉单通道维,
+    (10,20,1)→(5,5) 返回 2D), GPU 服务器 cv2 4.8.0 才是真实现 ——
+    行为差异让沙箱测试不可信。另: 沙箱 numpy 2.4.6 广播不前导补维
+    (右对齐), 构造行渐变测试数据须逐行显式赋值。1/8 粗尺度(切片
+    降采样)上净布料色掩蔽膨胀外扩, 最近邻回填(np.repeat x8),
+    基色采样精度 ±8px 对平滑布料渐变足够。
     高光袖料上鬼影印在高光带(局部 ~220,205,160), 单一全局/成分级基色
     会把与高光同色的合法填充误判; 最近净布料色让袖面像素自动对袖料
-    高光、身面像素自动对衣身暗料。arr_f: float32 RGB; clean: bool。
+    高光、身面像素自动对衣身暗料。
+    传播两阶段: ①纯横向核(5x1) —— 布料明暗沿行渐变(高光带在上/阴影
+    在下, r13 GPU 实测右袖 B 159@y620 → 125@y920), 且值传播用膨胀
+    (窗口取 max), 多行核会把上方更亮布料逐行复合进来(实测洞中心取到
+    57 灰阶之外的顶行色) → 同行布料才是正确锚, 单行核无跨行复合;
+    ②等方核(3x3)收尾 —— 完全被盖住的行(竖洞)横向无源, 竖向补齐。
+    arr_f: float32 RGB; clean: bool。
     """
-    import cv2
-
+    step = 8
     h, w = arr_f.shape[:2]
-    sw, sh = max(1, w // 8), max(1, h // 8)
-    arr_s = cv2.resize(arr_f, (sw, sh), interpolation=cv2.INTER_NEAREST)
-    clean_s = cv2.resize(clean.astype(np.uint8), (sw, sh), interpolation=cv2.INTER_NEAREST) > 0
+    arr_s = arr_f[::step, ::step].astype(np.float32)
+    clean_s = clean[::step, ::step]
     val = arr_s * clean_s[..., None]
-    known = clean_s.astype(np.uint8)
-    el = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    for _ in range(512):
-        if known.all():
-            break
-        gv = cv2.dilate(val, el)
-        gk = cv2.dilate(known, el)
-        fill = (gk > 0) & (known == 0)
-        val[fill] = gv[fill]
-        known = gk
-    return cv2.resize(val, (w, h), interpolation=cv2.INTER_NEAREST)
+    known = clean_s.copy()
+    ch, cw = known.shape
+    for kx, ky in ((5, 1), (3, 3)):
+        py, px = ky // 2, kx // 2
+        for _ in range(512):
+            if known.all():
+                break
+            vp = np.pad(val, ((py, py), (px, px), (0, 0)))
+            kp = np.pad(known, ((py, py), (px, px)), constant_values=False)
+            gv = vp[py : py + ch, px : px + cw].copy()
+            gk = kp[py : py + ch, px : px + cw].copy()
+            for oy in range(ky):
+                for ox in range(kx):
+                    if oy or ox:
+                        gv = np.maximum(gv, vp[oy : oy + ch, ox : ox + cw])
+                        gk = np.maximum(gk, kp[oy : oy + ch, ox : ox + cw])
+            fill = gk & ~known
+            if not fill.any():
+                break
+            val[fill] = gv[fill]
+            known = gk
+    return np.repeat(np.repeat(val, step, axis=0), step, axis=1)[:h, :w]
+
+
+def anchor_ref_local(
+    gen_img: Image.Image | np.ndarray,
+    matched_ref: Image.Image | np.ndarray,
+    keep_mask: np.ndarray | Image.Image,
+    region_mask: np.ndarray | Image.Image,
+    exclude_masks: list | None = None,
+    grow_px: int = 40,
+) -> Image.Image | np.ndarray:
+    """色调匹配参考的**局部**环形锚定: 贴回区内容对齐 gen 贴回区周边净布料。
+
+    全局色调匹配按整件 keep 布料统计锚定; 生成图布料明暗跨区域大幅变化
+    (r13 GPU 实测: 亮胸口 185-195 ↔ 深色下摆 57-96), 贴回区(核心场/
+    残余兜底)落在亮胸口时, 全局匹配按中位(96)锚定的暗布料(94)贴上
+    去成 413x300 深色矩形 —— "衣服像贴上去的/整体下移/衣领断层"
+    (r13 GPU 视觉验收)。反向场景同理(r10: 平铺亮衣料 198+ 拍上暗
+    衣身 96 一圈发光) —— 逐通道 delta = gen 周边净布料中位 - 匹配
+    参考周边布料中位, 加性平移到两侧等价, 两个方向都收敛。
+
+    delta 按**行分段**估计: 布料明暗沿行渐变(同一环带内 gen 胸口
+    191 ↔ 环下部 120), 单一环中位对准的是"平均布料"而非贴回行局部
+    —— 衣领区(场顶, 最亮)欠锚最重("衣领断层"残因); 每行取 ±24 行
+    窗口内的环净布料中位, 与袖口修复(同行布料取样)同一原理。
+    加性平移保留参考内部明暗起伏; 印花笔触不受影响 —— blend_core_ref_tone
+    的笔触保持取自原始参考, 本函数只动布料背景。净布料 = 环带内排除
+    亮中性(笔画/高光白)与 exclude_masks(核心场/鬼场等) 的像素;
+    成对样本 <48px 或 |全局 delta|>160(环采样不可信; 袖面高光 vs
+    阴影实测 135 合法)时原样返回; 行窗口样本 <32px 或 |delta|>160
+    时该行回退全局 delta。
+
+    Returns:
+        与 matched_ref 同尺寸同类型的锚定版(gen 侧带 .info 时保留)
+    """
+    try:
+        gen = np.asarray(gen_img.convert("RGB") if isinstance(gen_img, Image.Image) else gen_img, np.float32)
+        mat = np.asarray(
+            matched_ref.convert("RGB") if isinstance(matched_ref, Image.Image) else matched_ref, np.float32
+        )
+        if gen.shape != mat.shape:
+            logger.warning("anchor_ref_local: gen/matched 形状不一致, 原样返回")
+            return matched_ref
+        import cv2
+
+        keep = np.asarray(keep_mask)
+        keep = keep[..., 0] if keep.ndim == 3 else keep
+        ka = cv2.erode((keep > 127).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))) > 0
+        reg = np.asarray(region_mask)
+        reg = reg[..., 0] if reg.ndim == 3 else reg
+        reg_b = reg > 127
+        ring = (
+            (
+                cv2.dilate(
+                    reg_b.astype(np.uint8),
+                    cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * grow_px + 1, 2 * grow_px + 1)),
+                )
+                > 0
+            )
+            & ~reg_b
+            & ka
+        )
+        if exclude_masks:
+            for ex in exclude_masks:
+                if ex is None:
+                    continue
+                exa = np.asarray(ex)
+                exa = exa[..., 0] if exa.ndim == 3 else exa
+                ring &= ~(exa > 127)
+        if ring.sum() < 48:
+            return matched_ref
+        # 净布料过滤(两侧同口径): 排除亮中性(白墨笔画/高光白)与匹配侧
+        # 画布白底; 成对过滤 —— 同一像素须两侧都是布料, 中位数对的才
+        # 是同一块布
+
+        def _fabric_px(a):
+            return ((a.max(-1) - a.min(-1)) > 35) | (a.mean(-1) < 190)
+
+        paired = ring & _fabric_px(gen) & _fabric_px(mat) & (mat.mean(-1) < 245)
+        if paired.sum() < 48:
+            return matched_ref
+        rg = gen[paired]
+        rm = mat[paired]
+        delta_g = np.median(rg, axis=0) - np.median(rm, axis=0)
+        if np.abs(delta_g).max() > 160.0:
+            logger.warning("anchor_ref_local: delta %s 过大, 环采样不可信, 原样返回", delta_g.round(1).tolist())
+            return matched_ref
+        # 行分段 delta: 每行 ±24 行窗口内的成对环布料中位
+        h = mat.shape[0]
+        band = 24
+        delta_row = np.repeat(delta_g[None, :], h, axis=0)
+        ring_rows = np.flatnonzero(paired.any(axis=1))
+        if ring_rows.size:
+            y0, y1 = int(ring_rows[0]), int(ring_rows[-1])
+            for y in range(max(0, y0 - band), min(h, y1 + band + 1)):
+                lo, hi = max(0, y - band), min(h, y + band + 1)
+                pw = paired[lo:hi]
+                if pw.sum() < 32:
+                    continue
+                d_y = np.median(gen[lo:hi][pw], axis=0) - np.median(mat[lo:hi][pw], axis=0)
+                if np.abs(d_y).max() <= 160.0:
+                    delta_row[y] = d_y
+        out = np.clip(mat + delta_row[:, None, :], 0, 255).astype(np.uint8)
+        if isinstance(matched_ref, Image.Image):
+            im = Image.fromarray(out)
+            im.info = dict(matched_ref.info)
+            return im
+        return out
+    except Exception:
+        logger.exception("anchor_ref_local failed; returning matched as-is")
+        return matched_ref
 
 
 def ghost_inpaint_pass(

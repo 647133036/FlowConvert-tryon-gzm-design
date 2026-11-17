@@ -205,62 +205,28 @@ Entries discovered by the Agent during task execution should follow this format:
     永不下载。测试 `test_engine_fashn.py` 验证 stub 标志 `_atelier_commercial_stub=True`。
 
 [Project Knowledge Summary]
-- Date: 2026-11-10
-- Context: Discovered by Agent while implementing print-preservation refit pipeline
+- Date: 2026-11-10 (merged 2026-11-17)
+- Context: Discovered by Agent during the print-protection implementation rounds (refit pipeline / print-ROI inpaint / composite wiring)
 - Category: Workflow & Collaboration
 - Instructions:
-  - 商用主路径保护贴回: `protect_inverse_refit(result, source, apply_mask, feather_px)` 替代
-    旧 `blend_tryon` + `_seam_repair` 两步。遮罩外贴源图, 遮罩内保留生成像素,
-    边界带用 cv2.inpaint TELEA 平滑。`VTON_PROTECT_FEATHER`(默认 4) 控制边界带宽度。
-  - 确定性贴印升级: `VTON_REFIT_ENGINE` 选 `grid`(默认)/`tps`/`optical_flow`。
-    `tps_warp` 用 RBF thin-plate-spline 把 SKU 平铺图投到人体;
-    `optical_flow_refit` 在 TPS 结果上叠加 Farneback 光流微移(×0.5 保守系数)。
-    贴印在 `reapply_garment_detail`(pattern_lock) 之前执行, 让 pattern_lock 用更准的贴印像素。
-  - 多 seed 排序: `VTON_MULTI_SEED`(默认 3, 纯色=1)。`worker.py` 调 `run_multiseed`,
-    按 `quality_gate.score_for_sku`(SSIM/OCR) 排序取最高, 写 `job.multiseed` 元数据。
-  - 质检分档: `quality_gate.delivery_tier` 按 `VTON_QG_SSIM`(0.70) / `VTON_QG_OCR`(0.80)
-    分 `auto`/`review`。scikit-image 不可用时 `ssim_score` 回退到 numpy 灰度均值/方差 SSIM。
-  - `engine_status()` 新增 `refit_engine` 字段; `engine.py` 商用分支读 `VTON_REFIT_ENGINE`。
-  - 测试 `test_preserve_refit.py` 22 用例覆盖 protect_inverse_refit / tps_warp /
-    optical_flow_refit / run_multiseed / quality_gate。全量回归 378 passed。
-
-[Project Knowledge Summary]
-- Date: 2026-11-10
-- Context: Discovered by Agent while implementing print-ROI inpaint + fidelity tier
-- Category: Workflow & Collaboration
-- Instructions:
-  - 印花 ROI 局部 inpaint: `VTON_PRINT_INPAINT=1` 时 `detect_print_roi(cloth_ref, apply_mask)`
-    取贴回区内高频区(印花/文字边缘)的 dilate-erode 边界带; `_sdxl_inpaint_repair`
-    门禁为 `VTON_INPAINT_REPAIR=1 OR VTON_PRINT_INPAINT=1`, 边界带并入 `_build_inpaint_mask`
-    的 `print_roi` 参数(bitwise_or)。字母/图案内部像素保持确定性贴印, 不重绘。
-  - 印花保真分: `quality_gate.print_fidelity_score(result, cloth_ref, apply_mask)` 用贴回区内
-    warp 参考 vs 结果的灰度 NCC 映射 `(ncc+1)/2`; 双方灰度 std<6(纯色款)返回 1.0。
-    engine_sdxl/engine_fashn 写入 `result.info["print_fidelity"]` + `delivery_tier`,
-    worker 落库 job 元数据; 多 seed scorer 首选 print_fidelity(跨 seed 可比)。
-  - 测试注意: Telea/dilate-erode 边界带的逐像素位置对输入敏感, 断言要用
-    "边缘附近有带"(or 组合) + "块中心无带", 不要断言精确行号。
-  - worker 多 seed 测试用 `monkeypatch.setattr(worker_mod, "compose_tryon", stub)` 替换
-    模块级导入的 compose, stub 读 `os.environ["VTON_SEED"]` 按 seed 返回不同
-    print_fidelity, 验证择优与 multiseed 元数据(含 scores dict)落库。
-
-[Project Knowledge Summary]
-- Date: 2026-11-10
-- Context: Discovered by Agent while wiring print fidelity into CPU composite path
-- Category: Workflow & Collaboration
-- Instructions:
-  - CPU composite 兜底路径(engine.py `_composite_engine`)同样写 print_fidelity/
-    delivery_tier: 参考层=无阴影原始贴放层(ref_layer), mask=layer alpha。三引擎
-    (FASHN/SDXL/composite)的 job 元数据字段一致。
-  - `print_fidelity_score` 纯色判定只看参考侧 std<6(composite 接触阴影会抬高
-    结果侧方差, 不算失真)。
-  - 测试环境变量必须清理: `test_refit_seeds_default` 曾泄漏 VTON_MULTI_SEED=99
-    使后续真 compose 测试跑 8 次; 用 try/finally pop 或 monkeypatch.setenv。
-  - worker 读 VTON_MULTI_SEED 有 int() 护栏: 非法值回退 3, 上限封顶 8。
-  - 测试用纯色方图做 SKU 时 composite 的 `garment_alpha` 返回全 0(无背景对比
-    → 衣服不贴), 测试样图必须白底+色块(见 test_worker.py `_make_sku_png`)。
-  - GPU 冒烟脚本: `scripts/gpu/smoke_print_pipeline.py`(服务器布局 /root/vton/repo
-    + /root/autodl-tmp/vton_combo 样图), 一条命令验证 engine_status + FASHN 出图
-    + 保真分档 + 多 seed 择优。
+  - 保护贴回: `protect_inverse_refit` 替代旧 blend_tryon + _seam_repair 两步: 遮罩外贴源图,
+    遮罩内保留生成像素, 边界带 Telea 平滑(VTON_PROTECT_FEATHER=4)。
+  - 确定性贴印引擎 `VTON_REFIT_ENGINE` = grid/tps/optical_flow; 贴印在 reapply(pattern_lock) 之前。
+  - 多 seed: VTON_MULTI_SEED 默认 3(纯色 1), worker.run_multiseed 按 quality_gate 择优
+    (print_fidelity 跨 seed 可比), int() 护栏非法回退 3、封顶 8。
+  - 质检分档 delivery_tier: VTON_QG_SSIM=0.70 / VTON_QG_OCR=0.80 分 auto/review;
+    scikit-image 缺失时 ssim 回退 numpy 实现。
+  - 印花 ROI inpaint(VTON_PRINT_INPAINT=1): 贴回区内高频边缘带 Telea 修复, 字母/图案
+    内部保持确定性贴印; FASHN 路径 _ensure_parser_stub 注入 fashn_human_parser 零张量
+    stub, NVIDIA SegFormer 权重永不下载。
+  - print_fidelity_score: 贴回区灰度 NCC 映射 (ncc+1)/2, 纯色参考侧 std<6 返回 1.0;
+    三引擎统一写 result.info.print_fidelity + delivery_tier(composite 参考层=无阴影 ref_layer)。
+  - 测试要点: Telea/边界带逐像素位置对输入敏感, 断言"边缘附近有带"而非精确行号;
+    测试环境变量必须 try/finally pop; 纯色方图 SKU 使 garment_alpha 全 0, 样图须白底+色块;
+    fake safetensors 写 b"x" 即可, IP-Adapter 维度推断测试须真 safetensors 张量。
+  - GPU 冒烟: scripts/gpu/smoke_print_pipeline.py(服务器布局 /root/vton/repo +
+    /root/autodl-tmp/vton_combo); engine 测试须同时 monkeypatch engine_sdxl.engine_status
+    与 _engine_status_cache。
 
 [Project Knowledge Summary]
 - Date: 2026-11-13
@@ -288,3 +254,18 @@ Entries discovered by the Agent during task execution should follow this format:
   - 冒烟脚本第二段 `VTON_MULTI_SEED=3` 直调 `engine.compose_tryon` 输出
     `multiseed: {}` 是结构使然(multiseed 由 worker.run_multiseed 写 info,
     引擎层不写), 非失败信号; PASS 只看单 seed 段。
+
+[Project Knowledge Summary]
+- Date: 2026-11-17
+- Context: Discovered by Agent while implementing r13 same-row fabric sampling (sandbox/GPU cross-machine behavior gaps)
+- Category: Environment Configuration
+- Instructions:
+  - 沙箱 cv2 5.0.0 非真 OpenCV: distanceTransform 的 DIST_LABEL_PIXEL 标签恒 0;
+    resize 会压掉单通道维((h,w,1) 输入返回 2D)。GPU 服务器 cv2 4.8.0 为真实现。
+    需要跨机语义一致的图像原语用纯 numpy 实现(参照 preserve_refit._nearest_fabric_color:
+    切片降采样 + np.maximum 移位传播, 不用 cv2.resize/dilate)。
+  - 沙箱 numpy 2.4.6 广播不做前导补维(仅右对齐): (h,1) 源对 (h,w,3) 会落到后两维
+    → 行列转置; (3,1) 对 (3,4,3) 直接 ValueError(真 numpy 前导补维后成功)。
+    构造行渐变数据必须逐行显式赋值, 禁用 `arr[:,:] = vec[:,None]`;
+    `[...]`/`[..., None]` 尾接与同 ndim 广播两种语义一致, 安全。
+  - 生产代码已审计无前导补维依赖; 新写图像处理代码优先显式 repeat/tile/逐行循环。

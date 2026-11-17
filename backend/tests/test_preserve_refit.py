@@ -1114,3 +1114,91 @@ def test_refit_cloth_to_drawn_garment_rejects_collapsed_warp(monkeypatch):
 
     monkeypatch.setattr(preserve_refit, "tps_warp", _collapse)
     assert preserve_refit.refit_cloth_to_drawn_garment(g, (128, 160), drawn) is None
+
+
+def test_anchor_ref_local_shifts_dark_ref_to_bright_chest():
+    """局部环形锚定: 全局匹配的暗布料(94)对齐 gen 亮胸口(185-195)布料。
+
+    r13 GPU 视觉验收: 核心场贴回用全局匹配暗布料 → 胸口 413x300 深色
+    矩形("衣服像贴上去的/整体下移/衣领断层"); 锚定后布料底对齐周边
+    净布料, 亮中性笔画从环采样中排除(两侧同口径)。
+    """
+    from PIL import ImageDraw
+
+    w, h = 128, 160
+    gen = Image.new("RGB", (w, h), (198, 185, 143))  # 亮胸口布料
+    matched = Image.new("RGB", (w, h), (94, 86, 50))  # 全局匹配的暗布料
+    # 环内混入亮中性笔画(两侧): 不得污染中位
+    ImageDraw.Draw(gen).line((0, 80, 128, 80), fill=(250, 250, 250), width=3)
+    ImageDraw.Draw(matched).line((0, 80, 128, 80), fill=(250, 250, 250), width=3)
+    keep = np.full((h, w), 255, dtype=np.uint8)
+    region = np.zeros((h, w), np.uint8)
+    region[60:100, 40:88] = 255
+    out = preserve_refit.anchor_ref_local(gen, matched, keep, region)
+    o = np.asarray(out)
+    # 布料底对齐: region 内匹配布料 94+delta ≈ 198
+    assert abs(float(o[80, 20].mean()) - float(np.asarray(gen)[80, 20].mean())) < 12, "布料底必须对齐周边净布料"
+    # uint8 语义
+    assert o.dtype == np.uint8
+    # PIL 输入 → PIL 输出
+    assert isinstance(out, Image.Image)
+
+
+def test_anchor_ref_local_rejects_bad_ring_and_huge_delta():
+    """环样本不足 / delta 越界(|delta|>120 采样不可信): 原样返回。"""
+    w, h = 64, 80
+    gen = Image.new("RGB", (w, h), (10, 10, 10))
+    matched = Image.new("RGB", (w, h), (200, 200, 200))
+    keep = np.zeros((h, w), np.uint8)  # keep 全 0 → 环为空
+    region = np.zeros((h, w), np.uint8)
+    region[10:20, 10:20] = 255
+    out = preserve_refit.anchor_ref_local(gen, matched, keep, region)
+    assert np.array_equal(np.asarray(out), np.asarray(matched)), "环为空必须原样返回"
+    # keep 足够但色差 >120: 原样返回
+    keep2 = np.full((h, w), 255, dtype=np.uint8)
+    out2 = preserve_refit.anchor_ref_local(gen, matched, keep2, region)
+    assert np.array_equal(np.asarray(out2), np.asarray(matched)), "delta>120 必须原样返回"
+
+
+def test_nearest_fabric_color_horizontal_bias_preserves_row_gradient():
+    """横向各向异性 Voronoi: 布料明暗沿行渐变时, 最近布料取同行色。
+
+    r13 GPU: 右袖 B 通道 159@y620 → 125@y920, 圆形核跨行取到下方
+    阴影布料 → 填充压暗压灰(袖区"颜色没有了")。
+    """
+    h, w = 96, 96
+    arr = np.zeros((h, w, 3), np.float32)
+    grad = np.linspace(230, 60, h).astype(np.float32)  # 每行亮度: 顶部亮 → 底部暗
+    # 逐行显式赋值: 沙箱 numpy 2.4.6 广播不前导补维, (h,1) 对 (h,w,3)
+    # 会按尾对齐到后两维 → 行列转置, 不可用 arr[:, :] = grad[:, None]
+    for i in range(h):
+        arr[i, :, :] = grad[i]
+    clean = np.ones((h, w), bool)
+    clean[30:66, 30:66] = False  # 中央"洞"待传播
+    near = preserve_refit._nearest_fabric_color(arr, clean)
+    # 洞内每行的最近布料 ≈ 同行亮度(横向核优先同行取样), 容差 ±25
+    # (1/8 粗尺度行误差 ±1 行 → ±3.4 亮度)
+    for y in (34, 48, 62):
+        row_err = abs(near[y, 48].mean() - grad[y])
+        assert row_err < 25, f"y={y} 最近布料 {near[y, 48].mean():.0f} 偏离同行 {grad[y]:.0f}"
+    assert near[48, 48].mean() > 0
+
+
+def test_anchor_ref_local_row_banded_delta_tracks_row_gradient():
+    """行分段锚定: 单一环中位对准"平均布料"(衣领欠锚), 行窗口对准贴回行局部。"""
+    from PIL import ImageDraw
+
+    w, h = 96, 128
+    gen = Image.new("RGB", (w, h), (190, 182, 140))  # 上半亮带(胸口)
+    ImageDraw.Draw(gen).rectangle((0, 64, w, h), fill=(100, 92, 52))  # 下半暗带
+    matched = Image.new("RGB", (w, h), (60, 55, 30))  # 全局匹配的均匀暗布料
+    keep = np.full((h, w), 255, np.uint8)
+    region = np.zeros((h, w), np.uint8)
+    region[40:104, 30:66] = 255  # 贴回区跨两带
+    out = np.asarray(preserve_refit.anchor_ref_local(gen, matched, keep, region))
+    g = np.asarray(gen, np.float32)
+    top = out[56, 48].mean()  # region 顶行(亮带) → 须对齐亮带
+    bot = out[96, 48].mean()  # region 底行(暗带) → 须对齐暗带
+    assert abs(top - g[20, 10].mean()) < 15, f"顶行 {top:.0f} 须对齐亮带 {g[20, 10].mean():.0f}"
+    assert abs(bot - g[110, 10].mean()) < 15, f"底行 {bot:.0f} 须对齐暗带 {g[110, 10].mean():.0f}"
+    assert abs(top - bot) > 60, "行分段失效: 顶/底同值说明退回了单一 delta"
