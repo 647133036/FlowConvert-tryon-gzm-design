@@ -252,6 +252,20 @@ def compose_tryon_fashn(
                 subject_mask=subj,
             )
             drawn_mask = limit_mask_to_subject(shared, subj) if shared is not None else None
+            if drawn_mask is not None:
+                # 肩部带补全: 长发遮肩/脸区下扩余量会把衣服区顶行啃到肩部行
+                # 以下, TPS 对齐/贴回/保护全以顶行为准 → 整件衣下移, 肩部
+                # 落基模像素(袖子/领口变色, 视觉验收"肩膀往下一点才开始贴")。
+                # 用 pose 肩行把空档补回; 失败不阻断(保持未补全掩膜)。
+                try:
+                    from platform_presets import shoulder_complete_mask
+
+                    _completed = shoulder_complete_mask(drawn_mask, result, garment_extent, subject_mask=subj)
+                    if _completed is not drawn_mask:
+                        drawn_mask = _completed
+                except Exception:
+                    logger.exception("FASHN shoulder complete failed; keeping uncompleted mask")
+                    degraded_reasons.append("FASHN shoulder complete failed")
             refit = None
             if os.environ.get("VTON_FASHN_PRINT_ALIGN", "drawn") == "drawn" and drawn_mask is not None:
                 from preserve_refit import refit_cloth_to_drawn_garment
@@ -436,23 +450,40 @@ def compose_tryon_fashn(
                         _ref_matched = cloth_ref_full
                     # 鬼影擦除(核心场外): FASHN 按自己的几何摆放印花(实测
                     # 偏上), 核心场只盖 TPS 位置, 生成图的整套鬼影笔触
-                    # 暴露在场外(视觉验收: 上方半透明重影)。用色调匹配
-                    # 参考+恒等参数贴回 —— 恒等 (光/褶全关) 防 gen 鬼影区
-                    # 的明暗场/褶皱带通把鬼影形状搬回。实心款回退分支整件
-                    # 已贴回, 无需此步。
+                    # 暴露在场外(视觉验收: 上方半透明重影)。两级擦除:
+                    # ①ghost_inpaint_pass 局部修补 —— 凸包恒等贴回会把
+                    # 笔画周边的自然袖料整块拍平(r11 GPU 视觉验收"衣袖
+                    # 失真", 袖区 26.5k px), Telea 只从笔画周边取色, 袖褶
+                    # 光影全保; ②密网 Telea 填不净时 strict 残余检测
+                    # (基色=色调匹配参考 + 逐成分局部基色复核)兜底小范围
+                    # 贴回。排除边界统一 core+0: 核心贴印(alpha=1 +
+                    # feather 1px)在其后整体重贴核心场, 擦除越进核心场
+                    # 的部分不透出; [core, core+4) 环内的笔画必须允许修补,
+                    # 裁掉该环会残留鬼影(r12 重放实测擦除带 +17 灰阶;
+                    # 此前"涂改核心场边缘会让内容门跳过"系 NCC 度量在
+                    # 恒定白笔画上退化的误判)。实心款回退分支整件已贴回,
+                    # 无需此步。
                     try:
                         if ghost_full is not None and np.asarray(ghost_full).max() > 0:
-                            _rgb_result = reapply_garment_detail(
-                                _rgb_result,
-                                _ref_matched,
-                                ghost_full,
-                                pattern_lock=True,
-                                ref_alpha=alpha_full,
-                                light_strength=0.0,
-                                hf_strength=0.0,
-                                fold_gain=0.0,
-                                content_mask=np.asarray(keep_full),
-                            )
+                            from preserve_refit import ghost_inpaint_pass as _inpaint_fn
+                            from preserve_refit import ghost_strict_residual as _resid_fn
+
+                            _s1 = _inpaint_fn(_rgb_result, ghost_full, exclude_mask=core_full)
+                            _resid = _resid_fn(_s1, _ref_matched, keep_full, core_full, stroke_mask=ghost_full)
+                            if _resid is not None and np.asarray(_resid).max() > 0:
+                                _rgb_result = reapply_garment_detail(
+                                    _s1,
+                                    _ref_matched,
+                                    _resid,
+                                    pattern_lock=True,
+                                    ref_alpha=alpha_full,
+                                    light_strength=0.0,
+                                    hf_strength=0.0,
+                                    fold_gain=0.0,
+                                    content_mask=np.asarray(keep_full),
+                                )
+                            else:
+                                _rgb_result = _s1
                     except Exception:
                         logger.exception("FASHN ghost print erase failed; keeping current pixels")
                         degraded_reasons.append("FASHN ghost print erase failed")

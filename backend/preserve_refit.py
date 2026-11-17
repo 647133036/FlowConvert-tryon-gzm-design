@@ -465,18 +465,22 @@ def ghost_print_mask(
     keep_mask: np.ndarray | Image.Image,
     exclude_mask: np.ndarray | Image.Image | None = None,
 ) -> np.ndarray | None:
-    """生成图上的印花鬼影检测区(FASHN 自绘印花与 TPS 贴印几何错位时擦除用)。
+    """生成图上的印花鬼影笔画检测(FASHN 自绘印花与 TPS 贴印几何错位时擦除用)。
 
     FASHN 生成器按自己的理解摆放印花(实测比平铺几何偏上), 贴印核心只盖
     TPS 映射位置 → 生成图的鬼影整套暴露在核心场之外(视觉验收: 上方
     半透明猴头重影)。本函数在生成图上找鬼影笔画: 同色轴(亮中性+大色距,
     基色取参考图衣料区中位数 —— prewhiten 已证两图基色一致)+ bbox
     跨度门(整件环状结构); 无纹理门(生成图丝绸渲染处处带噪, 鬼影 4.3
-    与高光 4.5 lapE 同档, 实测色轴零高光假阳性)。调用方用参考内容
-    贴回该区(ref 在此处是干净底色, folds/hf 默认保身体光影) 即完成擦除。
+    与高光 4.5 lapE 同档, 实测色轴零高光假阳性)。
+
+    掩膜 = 笔画连通成分(+种子发芽)+9px margin, 非凸包填充(r11 GPU
+    视觉验收"衣袖失真": 凸包按凸性把袖区 26.5k 自然袖料吞进恒等贴平
+    区)。擦除由调用方执行: ghost_inpaint_pass 局部修补保袖褶 +
+    ghost_strict_residual 兜底。
 
     Returns:
-        uint8 掩膜(255=鬼影擦除区), 无检出/失败返回 None
+        uint8 掩膜(255=鬼影笔画+margin), 无检出/失败返回 None
     """
     try:
         import cv2
@@ -502,6 +506,11 @@ def ghost_print_mask(
         neutral = (px.max(-1) - px.min(-1)) < 40.0
         bright = px.mean(-1) >= float(base.mean()) + 10.0
         cand = (ka & (dist > 60.0) & (neutral & bright)).reshape(gen.shape[:2])
+        # 排除环 9px(与核心场自身外扩对齐)而非 19: 场(hull+9)与鬼场
+        # (≥core+9, 场末 dilate9 回填)必须无缝衔接, 否则 9-19px 环带内
+        # FASHN 银白残影两头都不清理(r9b GPU 视觉验收: 印花轮廓被
+        # 白色不规则边缘切割); 环带成分 ~10px 宽, 腐蚀 1px 后仍可成核。
+        ex_d = None
         if exclude_mask is not None:
             ex = np.asarray(exclude_mask)
             if ex.ndim == 3:
@@ -510,10 +519,6 @@ def ghost_print_mask(
                 ex = np.array(
                     Image.fromarray(ex.astype("uint8")).resize((gen.shape[1], gen.shape[0]), Image.Resampling.BILINEAR)
                 )
-            # 排除环 9px(与核心场自身外扩对齐)而非 19: 场(hull+9)与鬼场
-            # (≥core+9, 场末 dilate9 回填)必须无缝衔接, 否则 9-19px 环带内
-            # FASHN 银白残影两头都不清理(r9b GPU 视觉验收: 印花轮廓被
-            # 白色不规则边缘切割); 环带成分 ~10px 宽, 腐蚀 1px 后仍可成核。
             ex_d = cv2.dilate((ex > 127).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
             cand = cand & (ex_d == 0)
         if float(cand.sum()) < 32:
@@ -530,9 +535,12 @@ def ghost_print_mask(
         # 无纹理门: 生成图丝绸渲染处处带噪(lapE 鬼影 4.3-5.2 vs 高光 4.5,
         # canny10/30 0.7-18% vs 7.8% 同档互叠), 纹理无法区分; 色轴已足:
         # 生成图暖调高光(230,215,175 类)不过中性轴, 实测 gen 侧 cand 只有
-        # 鬼影+印花残迹, 零高光假阳性。擦除语义兜底: 贴回 ref+LF —— ref
-        # 有的内容重画为正确版本, ref 没有的才是擦幻觉。
-        hulls = []
+        # 鬼影+印花残迹, 零高光假阳性。
+        # 掩膜语义 = 笔画本身 + 9px margin(非凸包填充): r11 GPU 视觉验收
+        # "衣袖失真"—— 凸包按凸性把袖区 26.5k 自然袖料吞进恒等贴平区,
+        # 擦除语义只需盖住笔画, 调用方(erase_ghost_prints 流程)对笔画
+        # inpaint 局部修补 + 残余亮块小范围贴参考兜底, 袖褶光影全保。
+        seeds = np.zeros(gen.shape[:2], dtype=np.uint8)
         for i in range(1, num):
             if float(stats[i, cv2.CC_STAT_AREA]) < 150:
                 continue
@@ -540,16 +548,233 @@ def ghost_print_mask(
                 continue
             if float(stats[i, cv2.CC_STAT_WIDTH]) > 0.7 * k_w or float(stats[i, cv2.CC_STAT_HEIGHT]) > 0.7 * k_h:
                 continue
-            pts = np.column_stack(np.where(lab == i))
-            hulls.append(cv2.convexHull(pts[:, ::-1].astype(np.int32).reshape(-1, 1, 2)))
-        if not hulls:
+            seeds[lab == i] = 1
+        if seeds.max() == 0:
             return None
-        field = np.zeros(gen.shape[:2], dtype=np.uint8)
-        cv2.fillPoly(field, hulls, 255)
-        roi = cv2.dilate(field, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
-        return np.minimum(roi, mask.astype(np.uint8))
+        # 种子发芽: 腐蚀(3px)碎片段经 cand 连通性复活(与 print_core_mask
+        # 同构), margin 9px 覆盖笔画 AA + 半透晕边。掩膜不裁核心场: margin
+        # 越过 core 边缘的部分由后续核心恒等贴印重贴(贴印 alpha=1 + feather
+        # 1px, 不透出底层), 而 [core, core+4) 环内的鬼影笔画必须有人管
+        # (r12 重放实测: 裁掉该环会让擦除带残留 +17 灰阶)。
+        _gnum, glab, _, _ = cv2.connectedComponentsWithStats((cand > 0).astype(np.uint8))
+        sel_ids = np.isin(glab, np.unique(glab[seeds > 0]))
+        strokes = np.where(sel_ids & (cand > 0), np.uint8(255), np.uint8(0)).astype(np.uint8)
+        roi = cv2.dilate(strokes, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (19, 19)))
+        return np.minimum(roi, ka_img * 255)
     except Exception:
         logger.exception("ghost_print_mask failed")
+        return None
+
+
+def _coerce_mask_to_img(mask: np.ndarray | Image.Image, shape: tuple[int, int]) -> np.ndarray:
+    """mask 对齐到图像尺寸(灰度化+bilinear 缩放), 供鬼影系列函数复用。"""
+    m = np.asarray(mask)
+    if m.ndim == 3:
+        m = m[..., 0]
+    if m.shape[:2] != tuple(shape):
+        m = np.array(Image.fromarray(m.astype("uint8")).resize((shape[1], shape[0]), Image.Resampling.BILINEAR))
+    return m
+
+
+def _nearest_fabric_color(arr_f: np.ndarray, clean: np.ndarray) -> np.ndarray:
+    """每像素**最近**净布料像素颜色(粗分辨率 Voronoi 近邻色传播)。
+
+    cv2 distanceTransform 的 DIST_LABEL_PIXEL 在 cv2 5.x 标签语义失效
+    (实测恒 0), 不依赖它: 1/8 粗尺度上净布料色掩蔽膨胀外扩(逐 1px
+    直到全覆盖 —— 大片密集领地中心距净布料可 >64 粗像素), 最近邻
+    插值回原分辨率(基色采样精度 ±8px, 对平滑布料渐变足够)。
+    高光袖料上鬼影印在高光带(局部 ~220,205,160), 单一全局/成分级基色
+    会把与高光同色的合法填充误判; 最近净布料色让袖面像素自动对袖料
+    高光、身面像素自动对衣身暗料。arr_f: float32 RGB; clean: bool。
+    """
+    import cv2
+
+    h, w = arr_f.shape[:2]
+    sw, sh = max(1, w // 8), max(1, h // 8)
+    arr_s = cv2.resize(arr_f, (sw, sh), interpolation=cv2.INTER_NEAREST)
+    clean_s = cv2.resize(clean.astype(np.uint8), (sw, sh), interpolation=cv2.INTER_NEAREST) > 0
+    val = arr_s * clean_s[..., None]
+    known = clean_s.astype(np.uint8)
+    el = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    for _ in range(512):
+        if known.all():
+            break
+        gv = cv2.dilate(val, el)
+        gk = cv2.dilate(known, el)
+        fill = (gk > 0) & (known == 0)
+        val[fill] = gv[fill]
+        known = gk
+    return cv2.resize(val, (w, h), interpolation=cv2.INTER_NEAREST)
+
+
+def ghost_inpaint_pass(
+    gen_img: Image.Image,
+    stroke_mask: np.ndarray | Image.Image,
+    grow_px: int = 5,
+    inpaint_radius: int = 5,
+    exclude_mask: np.ndarray | Image.Image | None = None,
+) -> Image.Image:
+    """鬼影笔画局部修补(Telea inpaint): 只填笔画线, 袖褶光影全保。
+
+    恒等贴参考会把整个掩膜区拍成平铺衣料(r11 GPU 视觉验收"衣袖失真",
+    袖区 26.5k 自然袖料被凸包吞进恒等贴平区); inpaint 从笔画周边取色,
+    零笔画残留时修补结果与周围布料无缝 —— 印花网密的块 Telea 填不净,
+    由 ghost_strict_residual 检出后调用方小范围贴参考兜底。
+
+    exclude_mask(核心场): 涂改范围不越核心场本体(core+0) —— 核心场由后续
+    核心恒等贴印整体重贴(alpha=1 + feather 1px), 底层涂抹不透出; 但
+    [core, core+4) 环内的笔画必须允许修补, 裁掉该环会残留鬼影
+    (r12 重放实测擦除带 +17 灰阶)。
+    """
+    try:
+        import cv2
+
+        arr = np.asarray(gen_img.convert("RGB"))
+        m = _coerce_mask_to_img(stroke_mask, arr.shape[:2])
+        # >0(非 >127): 任意非零=待修补(cv2 掩膜语义), 0/1 掩膜不得静默失效
+        m = cv2.dilate(
+            (m > 0).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * grow_px + 1, 2 * grow_px + 1))
+        )
+        if exclude_mask is not None:
+            ex = _coerce_mask_to_img(exclude_mask, arr.shape[:2])
+            m[ex > 127] = 0
+        if m.max() == 0:
+            return gen_img.convert("RGB")
+        out = cv2.inpaint(arr, m, inpaint_radius, cv2.INPAINT_TELEA)
+        # 色锚: Telea 在大掩膜区域上把填充白化(袖区实测 填充(240,234,219)
+        # vs 净袖料(203,181,116) —— 亮度近似但色度丢失, 填充自身成浅白
+        # 斑) → 填充向最近净布料色平移**局部**色偏(填充局部均值差), 保留
+        # 填充内部明暗起伏; 掩膜边界 8px 羽化(边缘填充本就贴合周边,
+        # 全量平移会产生接缝)。衣身填充本就贴布料 → delta≈0 不变。
+        mb = m > 0
+        clean = ~mb
+        if exclude_mask is not None:
+            clean = clean & (ex <= 127)
+        if mb.sum() >= 32 and clean.sum() >= 24:
+            _outf = out.astype(np.float32)
+            near = _nearest_fabric_color(_outf, clean)
+            _w = mb.astype(np.float32)
+            _fsum = cv2.blur(_outf * _w[..., None], (41, 41))
+            _fw = cv2.blur(_w, (41, 41))
+            _floc = _fsum / np.maximum(_fw, 1e-6)[..., None]
+            _dt = cv2.distanceTransform(m, cv2.DIST_L2, 3)
+            _feather = np.clip(_dt / 8.0, 0.0, 1.0)[..., None]
+            _anchored = np.clip(_outf + (near - _floc) * _feather, 0, 255)
+            _anchored[~mb] = _outf[~mb]
+            out = _anchored.astype(np.uint8)
+        return Image.fromarray(out)
+    except Exception:
+        logger.exception("ghost_inpaint_pass failed; returning input")
+        return gen_img.convert("RGB")
+
+
+def ghost_strict_residual(
+    img: Image.Image | np.ndarray,
+    base_ref: Image.Image,
+    keep_mask: np.ndarray | Image.Image,
+    core_mask: np.ndarray | Image.Image | None,
+    grow_px: int = 11,
+    stroke_mask: np.ndarray | Image.Image | None = None,
+) -> np.ndarray | None:
+    """擦除后仍残留的鬼影亮块检测(密集笔画网 inpaint 填不净的兜底定位)。
+
+    判据与 ghost_print_mask 同色轴(亮中性+大色距), 但基色取 base_ref
+    (色调匹配后的参考) —— Telea 密网填充的中亮垃圾(150-190 vs 生成图
+    衣身 94)距原始参考基色(220)不足 60 灰阶会逃过检测(r12 重放实测
+    擦除带 +31.6)。检测区在 keep 内缩、核心场本体(core+0)之外;
+    返回已外扩 grow_px 的 uint8 掩膜(255=兜底贴参考区), 外扩不越
+    核心场本体(越入部分由核心贴印重贴)。
+
+    全局基色只作初筛; 逐像素再用最近净布料色复核 —— 全局基色(生成图衣身
+    ~96)会把亮袖料(丝绸反光 183-216)上与袖料同色的合法 inpaint 填充
+    判成垃圾 → 贴暗参考 → 亮袖上压深色斑块(r12 重放实测: 袖区笔画带
+    gen 224 → inpaint 213 → 兜底后 123, r11 "衣袖失真"的变体回归)。
+    检测区限笔画领地(ghost 掩膜外扩 5px = inpaint 足迹)内 —— Telea
+    垃圾只可能出现在修补过的区域, 领地外的亮袖料是净布料; 每个像素
+    的复核基色取距它**最近**的领地外净布料像素颜色(_nearest_fabric_color
+    的 Voronoi 近邻色 —— 高光袖料上鬼影印在高光带(局部 ~220,205,160),
+    成分级单一基色无法同时服务跨袖/身成分两侧; 袖面像素对袖料高光 →
+    色锚后的填充距 ~20-40 灰阶不判垃圾, 身面像素对衣身暗料 94 →
+    中亮垃圾 150-190 距 >60 照判)。净布料 <24px 时回退全局判据。
+    stroke_mask 传擦除用的鬼影笔画掩膜。
+    """
+    try:
+        import cv2
+
+        arr = img if isinstance(img, np.ndarray) else np.asarray(img.convert("RGB"))
+        arr = arr.astype(np.float32)
+        ref = np.asarray(base_ref.convert("RGB"), np.float32)
+        ka_img = (_coerce_mask_to_img(keep_mask, arr.shape[:2]) > 127).astype(np.uint8)
+        ka_inner = cv2.erode(ka_img, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))) > 0
+        if ka_inner.sum() < 64:
+            return None
+        zone = ka_inner
+        ex_b = None
+        if core_mask is not None:
+            ex_b = _coerce_mask_to_img(core_mask, arr.shape[:2]) > 127
+            zone = zone & ~ex_b
+        # 笔画领地 = ghost 掩膜(笔画+9px margin)再外扩 5px = inpaint 足迹:
+        # Telea 垃圾只可能出现在修补过的区域; 领地外的亮袖料(丝绸反光
+        # 183-216)是净布料, 全局亮中性判据会把整片袖料判成残余 → 贴暗
+        # 参考 → 亮袖压深色斑块(r12 重放实测袖带 inpaint 213 → 兜底 119,
+        # r11 "衣袖失真"变体回归)。检测区限领地内, 局部基色环从领地外
+        # 净布料采样(亮袖料底色 ~211 → 填充 216 距 5 灰阶不判垃圾;
+        # 衣身底色 94 → 中亮填充 150-190 照判)。
+        territory = None
+        if stroke_mask is not None:
+            territory = (
+                cv2.dilate(
+                    (_coerce_mask_to_img(stroke_mask, arr.shape[:2]) > 0).astype(np.uint8),
+                    cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11)),
+                )
+                > 0
+            )
+        detect_zone = zone & territory if territory is not None else zone
+        base = np.median(ref.reshape(-1, 3)[ka_inner.reshape(-1)], axis=0)
+        px = arr.reshape(-1, 3)
+        dist = np.linalg.norm(px - base, axis=-1)
+        neutral = (px.max(-1) - px.min(-1)) < 40.0
+        bright = px.mean(-1) >= float(base.mean()) + 10.0
+        cand = (detect_zone.reshape(-1) & (dist > 60.0) & (neutral & bright)).reshape(arr.shape[:2])
+        if cand.sum() < 32:
+            return None
+        # 净布料 = 领地外(有笔画掩膜时); 无 stroke_mask 时退化为候选外
+        # (亮块自身不得当自己的基色 —— 最近邻=自己 → 色距恒 0 永不检出)
+        clean_zone = zone & ~territory if territory is not None else zone & ~cand
+        # 逐像素最近净布料色复核(领地内填充 vs 领地外净布料):
+        # 高光袖料上鬼影印在高光带(局部 ~220,205,160), 单一基色(全局 94
+        # 或成分环中位数)都会把与高光同色的合法填充(231,218,179)误判
+        # (dist 75) → 贴暗成深斑; 跨袖/身成分两侧布料一亮一暗, 成分级
+        # 基色无法同时服务两侧 → 每像素取距它**最近**的净布料像素颜色
+        # (_nearest_fabric_color, 见其 docstring) —— 袖面像素自动对
+        # 袖料高光(色锚后填充距 ~20-40 灰阶不判垃圾), 身面像素自动对
+        # 衣身暗料(94, 中亮垃圾 150-190 距 >60 照判)。
+        resid = np.zeros(arr.shape[:2], bool)
+        if int(clean_zone.sum()) >= 24:
+            _near = _nearest_fabric_color(arr, clean_zone)
+            dist_v = np.linalg.norm(arr - _near, axis=-1)
+            raw = cand & (dist_v > 60.0)
+            _n2, _l2, _s2, _ = cv2.connectedComponentsWithStats(raw.astype(np.uint8))
+            for j in range(1, _n2):
+                if _s2[j, cv2.CC_STAT_AREA] >= 32:
+                    resid |= _l2 == j
+        else:
+            # 净布料不可用(整件衣被鬼影盖满等极端几何): 全局判据已成立,
+            # 保留(宁贴勿漏 —— 领地内垃圾漏贴是可见缺陷)
+            resid |= cand
+        if resid.sum() < 32:
+            return None
+        roi = cv2.dilate(
+            resid.astype(np.uint8) * 255,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * grow_px + 1, 2 * grow_px + 1)),
+        )
+        # 只裁核心场本体(core+0): 兜底越进核心场的部分由核心贴印重贴;
+        # [core, core+4) 环内的残留必须兜底, 否则该环鬼影残留
+        if ex_b is not None:
+            roi[ex_b] = 0
+        return np.minimum(roi, ka_img * 255)
+    except Exception:
+        logger.exception("ghost_strict_residual failed")
         return None
 
 
@@ -614,6 +839,15 @@ def match_ref_tone(
         gen_med = np.median(gen[zone], axis=0)
         ref_med = np.median(ref[zone], axis=0)
         delta = gen_med - ref_med
+        # 小差值门: 生成衣身与参考色差 <8 灰阶时, 整体平移只会把 SKU 真色
+        # 染偏(视觉验收"图案色彩保真"诉求); r10 鬼影发白场景(差百余灰阶)
+        # 仍正常平移, 擦除带语义不变。
+        if float(np.abs(delta).max()) < 8.0:
+            logger.info(
+                "match_ref_tone: 色差 %s < 8 灰阶, 保持参考原色(SKU 色彩保真)",
+                np.round(delta, 1),
+            )
+            return cloth_ref
         matched = np.clip(ref + delta, 0, 255).astype(np.uint8)
         logger.info(
             "match_ref_tone: gen %s / ref %s -> delta %s",
@@ -643,7 +877,11 @@ def blend_core_ref_tone(
 
     笔触判定(参考侧): 亮(bright_thresh)且低彩度(chroma_thresh) ——
     真丝底色 (215,197,149) min=149 不入, 高光 (240,226,180) min=180
-    不入, 白墨 (255,255,255)/(247,246,240) 入。
+    不入, 白墨 (255,255,255)/(247,246,240) 入。中性像素按亮度在
+    衣料中位(非笔画像素中位)与 bright_thresh 之间 smoothstep 渐变,
+    TPS warp 拉糊的笔触 AA 边不再有 225 处 130 灰阶悬崖(r11 GPU
+    视觉验收"印花被暗色图层盖住"); 非笔画像素占比 <20% 的实心印花场
+    回退硬门语义(笔画原样, 其余匹配)。
 
     Returns:
         混合后的 RGB PIL 图; matched_ref 与 cloth_ref 一致时直接返回后者
@@ -663,11 +901,44 @@ def blend_core_ref_tone(
         if not zone.any():
             return cloth_ref
         strokes = zone & (ref.min(axis=-1) >= bright_thresh) & ((ref.max(axis=-1) - ref.min(axis=-1)) <= chroma_thresh)
-        # 从原始参考出发只混场内: 场外像素保持原样(引擎只取 core 场内,
-        # 但混合图自身语义应自洽 —— 核心参考=原参考+场内衣料色调匹配)。
-        blended = ref.copy()
-        zone_cloth = zone & ~strokes
-        blended[zone_cloth] = mat[zone_cloth]
+        # 软边双轴: ①亮度 smoothstep —— 硬门在 225 处的 130 灰阶悬崖会把
+        # TPS warp 拉糊的笔触 AA 边(220-250, 中性)整圈打暗(r11 GPU 视觉
+        # 验收"印花被一层暗色图层盖着"); ②笔画距离渐变 —— 亮丝绸 SKU 的
+        # 衣料中位(218)与笔触档(225)贴脸, 亮度轴分不出 AA fringe 与衣料
+        # (r12 重放实测 AA 环仍 99 vs 参考 218), 距离轴按"距最近笔触 ≤3px"
+        # 渐变补位。非中性像素(高光/彩色)维持匹配语义不变。
+        # 锚点取非笔画像素中位而非整场中位: 密笔画凸包(实心logo)整场
+        # 中位≈笔画亮度, 会把 ramp 锚到笔触档 → 整场全被匹配打暗;
+        # 非笔画像素占比 <20% 或锚点够不到门限以下时, 判定该场为实心
+        # 印花, 回退硬门语义(笔画原样, 其余匹配)。
+        lum = ref.mean(axis=-1)
+        non_stroke = zone & ~strokes
+        cloth_med = -1.0
+        if non_stroke.sum() >= 0.2 * max(int(zone.sum()), 1):
+            cloth_med = float(np.median(lum[non_stroke]))
+        if 0.0 <= cloth_med <= float(bright_thresh) - 4.0:
+            _t = np.clip((lum - (cloth_med + 6.0)) / max(float(bright_thresh) - cloth_med, 1.0), 0.0, 1.0)
+            _w = _t * _t * (3.0 - 2.0 * _t)
+            if strokes.any():
+                try:
+                    import cv2  # (距离轴可选: 无 cv2 时仅亮度轴)
+                except ImportError:
+                    pass
+                else:
+                    # 距最近笔画 ≤3px 渐变到原样(笔画自身 d=0 → w=1 自洽)
+                    _sd = cv2.distanceTransform((~strokes).astype(np.uint8), cv2.DIST_L2, 5)
+                    _wd = np.clip(1.0 - _sd / 3.0, 0.0, 1.0)
+                    _wd = _wd * _wd * (3.0 - 2.0 * _wd)
+                    _w = np.maximum(_w, _wd)
+            # 中性门最后统一收口: 高光/彩色贴着笔画也不得借距离轴漏进原样
+            # (r10 发白轮廓带回归风险)
+            neutral = (ref.max(axis=-1) - ref.min(axis=-1)) <= chroma_thresh
+            _w = np.where(neutral, _w, 0.0)
+        else:
+            _w = strokes.astype(np.float32)
+        _w3 = _w[..., None]
+        blended = np.clip(ref * _w3 + mat * (1.0 - _w3), 0, 255).astype(np.uint8)
+        blended[~zone] = ref[~zone]
         logger.info(
             "blend_core_ref_tone: core %dpx 中笔触保持 %dpx (%.0f%%), 其余用色调匹配版",
             int(zone.sum()),

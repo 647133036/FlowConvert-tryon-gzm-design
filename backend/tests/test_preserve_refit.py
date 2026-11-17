@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+import cv2
 import numpy as np
 import preserve_refit
 import quality_gate
@@ -745,6 +746,117 @@ def test_ghost_print_mask_rejects_whole_garment_candidate():
     assert ghost is None, "整件级候选必须被 bbox 跨度门拦截"
 
 
+def test_ghost_print_mask_returns_255_semantics():
+    """返回掩膜必须 0/255 语义(非 0/1): ghost_inpaint_pass 用 >127 判笔画,
+    0/1 掩膜会静默失效(inpaint 全跳过 → 鬼影原样残留)。"""
+    from PIL import ImageDraw
+
+    w, h = 128, 160
+    keep = np.full((h, w), 255, dtype=np.uint8)
+    ref = Image.new("RGB", (w, h), (216, 198, 151))
+    ImageDraw.Draw(ref).rectangle((36, 96, 92, 140), fill=(250, 249, 246))
+    core = preserve_refit.print_core_mask(ref, keep)
+    gen = Image.new("RGB", (w, h), (216, 198, 151))
+    ImageDraw.Draw(gen).rectangle((40, 20, 88, 64), fill=(238, 234, 226))
+    gen = gen.filter(ImageFilter.GaussianBlur(2))
+    ghost = np.asarray(preserve_refit.ghost_print_mask(gen, ref, keep, exclude_mask=core))
+    assert ghost.max() == 255, f"掩膜必须 0/255, 实测 max={ghost.max()}"
+
+
+def test_ghost_inpaint_pass_erases_strokes_keeps_folds():
+    """r12 擦除语义: Telea 只从笔画周边取色填笔画, 笔画外的袖褶光影
+    逐位不变(整场贴参考会把袖区拍平 → r11 GPU 视觉验收"衣袖失真")。"""
+    from PIL import ImageDraw
+
+    w, h = 128, 160
+    base = np.full((h, w, 3), (216, 198, 151), dtype=np.uint8)
+    base[:, 40:46] = (150, 130, 90)  # 竖向褶皱阴影带(袖褶)
+    base[:, 90:96] = (170, 150, 110)
+    gen = Image.fromarray(base)
+    ImageDraw.Draw(gen).rectangle((60, 40, 84, 72), fill=(255, 255, 255))  # 鬼影笔画块
+    mask = np.zeros((h, w), np.uint8)
+    mask[38:74, 58:86] = 255
+    out = np.asarray(preserve_refit.ghost_inpaint_pass(gen, mask))
+    # 掩膜外逐位不变(褶皱带/底色全保)
+    m_d = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))) > 0
+    assert np.array_equal(out[~m_d], base[~m_d]), "inpaint 必须只动掩膜邻域"
+    # 笔画中心被填成周边布料色(非白)
+    assert out[56, 72].mean() < 210, f"笔画中心 {out[56, 72]} 不得残留白"
+    # 纯 0/1 掩膜(异常输入语义)也不崩
+    m01 = (mask > 0).astype(np.uint8)
+    out01 = np.asarray(preserve_refit.ghost_inpaint_pass(gen, m01))
+    assert out01[56, 72].mean() < 210
+    # exclude(核心场): 只裁核心场本体(core+0) —— 核心贴印随后重贴核心场;
+    # [core, core+4) 环内笔画必须允许修补(裁掉该环会残留鬼影, r12 重放
+    # 实测擦除带 +17 灰阶)。
+    core = np.zeros((h, w), np.uint8)
+    core[74:120, 50:80] = 255  # 贴着笔画块下缘
+    m_near = np.zeros((h, w), np.uint8)
+    m_near[50:70, 60:86] = 255  # 距 core 边缘 <9+5px, 外扩会越界
+    out_ex = np.asarray(preserve_refit.ghost_inpaint_pass(gen, m_near, exclude_mask=core))
+    assert np.array_equal(out_ex[core > 127], base[core > 127]), "核心场本体内像素不得被 inpaint 涂改"
+    # 越进 [core, core+4) 环的掩膜部分保留: 该环内笔画(r72 处 stroke 块
+    # 下缘)必须被修补, 填充自周围白衣料 → 不得残留白色笔画
+    # (色锚后填充色可与笔画 AA 边缘色巧合相等, 断言用"非白"而非逐位不等)
+    assert out_ex[72, 70].mean() < 210, "core 外 4px 环内笔画必须被修补"
+
+
+def test_ghost_strict_residual_flags_leftover_bright_block():
+    """密集笔画网 inpaint 填不净(r11 GPU 实测残余 8957px): 严格色轴
+    (亮中性+大色距)在 keep 内缩/核心外扩之外检出残余亮块; 干净图 → None。"""
+    from PIL import ImageDraw
+
+    w, h = 128, 160
+    keep = np.full((h, w), 255, dtype=np.uint8)
+    ref = Image.new("RGB", (w, h), (216, 198, 151))
+    core = np.zeros((h, w), np.uint8)
+    core[96:140, 36:92] = 255
+    clean = Image.new("RGB", (w, h), (200, 185, 140))
+    assert preserve_refit.ghost_strict_residual(clean, ref, keep, core) is None, "干净图不得误报残余"
+    dirty = Image.new("RGB", (w, h), (200, 185, 140))
+    ImageDraw.Draw(dirty).rectangle((50, 30, 74, 54), fill=(252, 250, 247))  # inpaint 残余亮块
+    resid = preserve_refit.ghost_strict_residual(dirty, ref, keep, core)
+    assert resid is not None, "残余亮块必须检出(兜底贴回依赖)"
+    resid = np.asarray(resid)
+    assert resid[42, 62] == 255, "残余块中心必须在兜底场内"
+    assert resid.max() == 255, "掩膜必须 0/255 语义"
+    # 核心场及其 9px 环内不兜底(核心贴印自管)
+    assert resid[110, 64] == 0, "核心场内不得进入兜底场"
+    # keep 边界 ~4px 腐蚀带(ellipse 9 核半径 4): 完全贴 keep 边的薄亮条
+    # 不采(越界擦除风险)。注意 cv2 erode 图像边界按 +inf 填充, 全图 keep
+    # 在图像边缘无守卫 —— 用带真实边界的子矩形 keep 验证。
+    keep2 = np.zeros((h, w), np.uint8)
+    keep2[20:140, 20:108] = 255
+    edge = Image.new("RGB", (w, h), (200, 185, 140))
+    ImageDraw.Draw(edge).rectangle((22, 17, 104, 21), fill=(252, 250, 247))
+    assert preserve_refit.ghost_strict_residual(edge, ref, keep2, core) is None, "keep 边界薄条带不采"
+
+
+def test_ghost_strict_residual_dense_net_on_bright_fabric_not_flagged():
+    """密集笔画网落在亮袖料(丝绸反光)上: 填充与袖料同色 = 合法 inpaint 结果,
+    不得判垃圾贴暗参考(r12 重放实测袖带 inpaint 后 213 → 兜底后 123,
+    r11 "衣袖失真"变体回归)。环外径 r60 越过整张笔画网取到真袖料底色。"""
+    from PIL import ImageDraw
+
+    w, h = 256, 300
+    # 亮袖料底(丝绸反光 ~211, 中性)
+    img = Image.new("RGB", (w, h), (213, 209, 200))
+    dr = ImageDraw.Draw(img)
+    # 密集鬼影笔画网: 整只猴头轮廓 ~100px 宽, 笔画 222-226(与袖料近同色)
+    for yy in range(60, 170, 6):
+        dr.line((70, yy, 180, yy + 12), fill=(225, 223, 218), width=3)
+    dr.ellipse((95, 80, 155, 130), outline=(226, 224, 219), width=3)
+    # 笔画掩膜(引擎的 stroke_mask): 覆盖笔画网+margin
+    stroke = np.zeros((h, w), np.uint8)
+    stroke[50:190, 60:190] = 255
+    keep = np.full((h, w), 255, dtype=np.uint8)
+    ref = Image.new("RGB", (w, h), (96, 84, 60))  # 暗衣身色调的匹配参考
+    core = np.zeros((h, w), np.uint8)
+    core[240:280, 90:170] = 255
+    resid = preserve_refit.ghost_strict_residual(img, ref, keep, core, stroke_mask=stroke)
+    assert resid is None or np.asarray(resid).max() == 0, "亮袖料上的密集笔画网填充不得判垃圾贴暗"
+
+
 # ---------- match_ref_tone ----------
 
 
@@ -780,6 +892,82 @@ def test_match_ref_tone_size_mismatch_returns_original():
     ref = Image.new("RGB", (32, 32), (210, 200, 190))
     out = preserve_refit.match_ref_tone(gen, ref, np.full((64, 64), 255, dtype=np.uint8))
     assert np.asarray(out).tobytes() == np.asarray(ref).tobytes()
+
+
+def test_match_ref_tone_small_delta_keeps_ref_colors():
+    """色差 <8 灰阶: 整体平移只会把 SKU 真色染偏, 必须原样返回(视觉验收
+    "图案色彩保真"); 大差值(r10 鬼影发白 ~100 灰阶)仍平移."""
+    w, h = 128, 160
+    keep = np.full((h, w), 255, dtype=np.uint8)
+    gen = Image.new("RGB", (w, h), (102, 93, 84))
+    ref = Image.new("RGB", (w, h), (100, 90, 80))
+    out = preserve_refit.match_ref_tone(gen, ref, keep)
+    assert np.asarray(out).tobytes() == np.asarray(ref).tobytes(), "小色差必须保持参考原色"
+    # 大色差仍平移(既有语义不回归)
+    gen2 = Image.new("RGB", (w, h), (100, 90, 80))
+    ref2 = Image.new("RGB", (w, h), (210, 200, 190))
+    out2 = preserve_refit.match_ref_tone(gen2, ref2, keep)
+    arr = np.asarray(out2, np.float32)
+    assert abs(arr[..., 0].mean() - 100) < 3, "大色差场景仍须贴到生成图色调"
+
+
+# ---------- blend_core_ref_tone ----------
+
+
+def test_blend_core_ref_tone_soft_edge_ramps_aa_fringe():
+    """r12 软边: TPS warp 拉糊的笔触 AA 边(220-250, 中性)按亮度 smoothstep
+    渐变 —— 硬门在 225 处的 130 灰阶悬崖会把 AA 整圈打暗 → r11 GPU 视觉
+    验收"印花被一层暗色图层盖着"。衣料→匹配版, 笔触→原样, AA 之间单调。
+    """
+    w, h = 96, 96
+    ref = np.full((h, w, 3), (215, 197, 168), dtype=np.uint8)
+    # 核心场: 衣料为主 + 白墨笔触 + AA 渐变边(内亮外暗两档)
+    ref[19:51, 19:51] = (222, 210, 196)  # 外档 AA, lum~209
+    ref[22:48, 22:48] = (232, 220, 205)  # 内档 AA, lum~219
+    ref[25:45, 25:45] = (252, 251, 248)  # 白墨笔触
+    matched = np.clip(ref.astype(np.int16) - 90, 0, 255).astype(np.uint8)
+    core = np.zeros((h, w), dtype=np.uint8)
+    core[10:60, 10:60] = 255
+    out = np.asarray(
+        preserve_refit.blend_core_ref_tone(Image.fromarray(ref), core, Image.fromarray(matched)), np.float32
+    )
+    # 衣料 → 匹配版(暗)
+    assert np.allclose(out[15, 15], matched[15, 15], atol=1), out[15, 15]
+    # 笔触 → 原样(客观亮色)
+    assert np.allclose(out[35, 35], ref[35, 35], atol=1), out[35, 35]
+    # AA 内档: 严格介于匹配版与原样之间(悬崖消除), 且偏向原样
+    _aa = out[23, 23]
+    assert matched[23, 23, 0] + 5 < _aa[0] < ref[23, 23, 0] - 5, _aa
+    # 外档(更暗) → 比内档更靠近匹配版(单调渐变)
+    _aa2 = out[20, 20]
+    assert matched[20, 20, 0] + 3 < _aa2[0] < _aa[0] - 3, (_aa2, _aa)
+    # r12 距离轴: 亮丝绸 SKU 上衣料中位(218)与笔触档(225)贴脸, 亮度轴
+    # ramp 退化分不出 AA fringe 与衣料 → 距最近笔触 ≤3px 渐变接管。
+    # [24,30] 距笔触 1px(w_dist≈0.74) vs [23,30] 距 2px(≈0.26), 同亮度
+    # 219: 前者必须比后者更靠近原样(亮度轴两处给的都是 0.68)。
+    _near = out[24, 30]
+    _far = out[23, 30]
+    assert _near[0] > _far[0] + 3, f"距笔触 1px 的 AA 必须比 2px 的更靠近原样: {_near} vs {_far}"
+
+
+def test_blend_core_ref_tone_solid_stroke_zone_falls_back_to_hard_gate():
+    """实心印花场(非笔画像素 <20%, 如实心 logo): 衣料锚点取不到 →
+    回退硬门语义: 笔画原样, 高光(非中性)仍匹配 —— 密笔画凸包不得因
+    锚点漂移整场被匹配打暗。"""
+    w, h = 96, 96
+    ref = np.full((h, w, 3), (215, 197, 168), dtype=np.uint8)
+    ref[12:68, 12:68] = (252, 251, 248)  # 实心白墨块(占场 87%)
+    ref[35, 35] = (240, 220, 180)  # 场内高光(非中性, spread 60)
+    matched = np.clip(ref.astype(np.int16) - 90, 0, 255).astype(np.uint8)
+    core = np.zeros((h, w), dtype=np.uint8)
+    core[10:70, 10:70] = 255
+    out = np.asarray(
+        preserve_refit.blend_core_ref_tone(Image.fromarray(ref), core, Image.fromarray(matched)), np.float32
+    )
+    # 实心笔画原样(锚点漂移不得把整场打暗)
+    assert np.allclose(out[30, 30], ref[30, 30], atol=1), out[30, 30]
+    # 高光维持匹配语义(硬门行为)
+    assert np.allclose(out[35, 35], matched[35, 35], atol=1), out[35, 35]
 
 
 # ---------- clip_mask_to_garment_alpha ----------

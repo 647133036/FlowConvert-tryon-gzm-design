@@ -1852,6 +1852,127 @@ def limit_mask_to_subject(
     return out.astype("uint8")
 
 
+def shoulder_complete_mask(
+    drawn_mask: np.ndarray | Image.Image,
+    img: Image.Image,
+    garment_extent: dict | None = None,
+    subject_mask: np.ndarray | None = None,
+    pose_kp: dict | None = None,
+) -> np.ndarray | Image.Image:
+    """肩部带补全: 生成图衣服区被发丝/脸区掩膜啃掉肩部行时, 把肩部行补回贴回区。
+
+    症状(视觉验收): 保护贴回/印花贴回从"肩膀往下一点"才开始 —— 衣服区掩膜
+    顶行落在肩部行以下(长发遮肩/脸区下扩余量啃掉肩部行), TPS 对齐与贴回
+    全部以该顶行为准 → 整件衣料被下移, 肩部/领口/袖根留在生成像素或基模
+    像素上, 袖子和领口颜色与 SKU 不符, 贴回边界可见(不贴合)。
+
+    规则:
+    - 仅覆肩款补(sleeve ∈ short/long 或 extent 缺失按 short 口径, 与
+      clothing_mask 的 sleeve_eff 兜底一致); sleeveless 肩部露肤, 不补。
+    - pose 肩点缺失/置信度 <0.3 → 原样返回(对齐层不做猜测性补全)。
+    - 补全行 = [肩行 - 2%*span, 现顶行) 的空档; 掩膜顶行已在肩行之上
+      (短发款) → 原样返回, 不改动。
+    - 补全列 = 掩膜顶带(顶行起 15% 行高)列跨 ±5% 画宽, 主体掩膜给定时
+      限主体内(与 limit_mask_to_subject 同口径)。
+    - neckline=open: 补全行内中央条带(画宽 35%-65%)挖掉, 露颈肤色保留
+      (与 clothing_mask 颈区开孔同语义); closed: 中央条带一并补(衣料盖颈)。
+    - 补全行与现顶行接缝做 8px 高斯平滑, 不引入硬边。
+    - 双类型兼容: 输入 ndarray/PIL, 输出同型(与 limit_mask_to_subject 一致)。
+
+    Args:
+        drawn_mask: 生成图检测出的衣服区 (uint8 0-255 或 PIL L)
+        img: 生成图 RGB (pose 检测用)
+        garment_extent: detect_garment_extent 输出 (sleeve/neckline 键, 可 None)
+        subject_mask: 主体掩膜 (uint8 0/1 或 0/255, 可 None)
+        pose_kp: 显式 pose 关键点(测试注入); None 时走 _detect_pose_keypoints
+
+    Returns:
+        补全后的掩膜(同型同尺寸); 不触发补全时原样返回输入对象。
+    """
+    m_in = drawn_mask
+    m = np.asarray(m_in)
+    is_pil = isinstance(m_in, Image.Image)
+    if m.ndim == 3:
+        m = m[..., 0]
+    if m.size == 0:
+        return m_in
+    h, w = m.shape[:2]
+
+    sleeve = (garment_extent or {}).get("sleeve") or "short"
+    if sleeve == "sleeveless":
+        return m_in
+    neckline_open = (garment_extent or {}).get("neckline", "closed") == "open"
+
+    if pose_kp is None:
+        pose_kp = _detect_pose_keypoints(img)
+    sh = pose_kp.get("shoulder") if pose_kp else None
+    if sh is None or len(sh) < 3 or sh[2] < 0.3:
+        return m_in
+    shoulder_row = int(sh[1] * h)
+
+    ys = np.where(m > 127)[0]
+    if len(ys) == 0:
+        return m_in
+    top_row = int(ys.min())
+    if subject_mask is not None:
+        s_rows = np.where(np.asarray(subject_mask) > 0)[0]
+        span = int(max(1, (s_rows.max() - s_rows.min()) if len(s_rows) else (ys.max() - top_row)))
+    else:
+        span = int(max(1, ys.max() - top_row))
+    fill_top = max(0, shoulder_row - int(0.02 * span))
+    if top_row <= fill_top:
+        return m_in  # 掩膜顶行已在肩行之上(含肩), 无空档
+
+    # 补全列: 顶带列跨 ±5% 画宽
+    band_rows = max(1, int(0.15 * (ys.max() - top_row))) + 1
+    xs = np.where(m[top_row : top_row + band_rows] > 127)[1]
+    if len(xs) == 0:
+        xs = np.where(m > 127)[1]
+    x0, x1 = int(xs.min()), int(xs.max())
+    pad = int(0.05 * w)
+    x0 = max(0, x0 - pad)
+    x1 = min(w - 1, x1 + pad)
+
+    out = m.copy()
+    fill_rows = slice(fill_top, top_row)
+    fill_cols = slice(x0, x1 + 1)
+    out[fill_rows, fill_cols] = 255
+    # 顺序: 硬填列跨 → 补全带自身 8px 高斯(列边/顶边柔化) → 主体门重挂
+    # (防 blur 把贴回值泄漏到主体外, 主体外恒 0) → 开领中央条带挖空。
+    # 顶行(top_row)及以下原掩膜羽化带不动 —— 贴回几何以原检测为准。
+    subj_gate = None
+    if subject_mask is not None:
+        s = np.asarray(subject_mask)
+        if s.ndim == 3:
+            s = s[..., 0]
+        subj_gate = s > 0
+    try:
+        import cv2
+
+        out[fill_rows, :] = cv2.GaussianBlur(out[fill_rows, :], (0, 0), 8)
+    except Exception:  # noqa: BLE001
+        pass
+    if subj_gate is not None:
+        out[fill_rows, :] = np.where(subj_gate[fill_rows], out[fill_rows, :], 0)
+    if neckline_open:
+        c0, c1 = int(w * 0.35), int(w * 0.65)
+        out[fill_rows, c0:c1] = 0
+    logger.info(
+        "shoulder_complete_mask: 肩部行补全 %d-%d (肩行=%d, 顶行=%d, cols %d-%d, neckline_open=%s)",
+        fill_top,
+        top_row - 1,
+        shoulder_row,
+        top_row,
+        x0,
+        x1,
+        neckline_open,
+    )
+    arr = out.astype("uint8")
+    if is_pil:
+        return Image.fromarray(arr, "L")
+    return arr
+
+
 def blend_tryon(
     original: Image.Image,
     generated: Image.Image,

@@ -2366,3 +2366,120 @@ def test_rembg_session_failure_short_circuit(monkeypatch, tmp_path):
     # 第二张: 短路, 不再调 new_session
     assert pp.foreground_mask(img) is None
     assert len(calls) == 1
+
+
+# ---------- shoulder_complete_mask (肩部带补全, 贴回肩线下移 bug) ----------
+
+
+def _shoulder_fixture(mask_top=120, h=200, w=200):
+    """主体中央矩形, 衣服区掩膜顶行=mask_top(肩部行以下), 列跨 60-140."""
+    m = np.zeros((h, w), dtype=np.uint8)
+    m[mask_top:180, 60:140] = 255
+    return m
+
+
+def test_shoulder_complete_fills_gap_to_shoulder_row():
+    import platform_presets as pp
+
+    """sleeve=short + pose 肩行 90 < 掩膜顶行 120 → 补全 [fill_top,120) 行."""
+    m = _shoulder_fixture(mask_top=120)
+    subj = np.zeros((200, 200), dtype=np.uint8)
+    subj[40:180, 50:150] = 1
+    out = pp.shoulder_complete_mask(
+        m, Image.new("RGB", (200, 200)), None, subject_mask=subj, pose_kp={"shoulder": (0.5, 0.45, 0.9)}
+    )
+    assert out is not m
+    assert (out[40:88, 50:150] == 0).all(), "补全之上不得越界填充"
+    # 肩部行(90)已被补: 主体内的肩部带列恢复 255(接缝 4px 外取样)
+    assert (out[92:114, 55:145] > 127).all(), "肩部带行必须补回贴回区"
+    # 顶行以下原掩膜不动
+    assert (out[120:180, 60:140] == 255).all()
+
+
+def test_shoulder_complete_subject_gates_columns():
+    import platform_presets as pp
+
+    """主体外的肩部列不得补(与 limit_mask_to_subject 同口径)."""
+    m = _shoulder_fixture(mask_top=120)
+    subj = np.zeros((200, 200), dtype=np.uint8)
+    subj[40:180, 70:130] = 1  # 主体比掩膜列跨窄
+    out = pp.shoulder_complete_mask(
+        m, Image.new("RGB", (200, 200)), None, subject_mask=subj, pose_kp={"shoulder": (0.5, 0.45, 0.9)}
+    )
+    assert (out[90:114, 55:65] == 0).all(), "主体外列保持 0"
+    assert (out[90:114, 75:125] > 127).all(), "主体内列补 255"
+
+
+def test_shoulder_complete_open_neckline_keeps_neck_strip():
+    import platform_presets as pp
+
+    """neckline=open: 补全行内中央条带(35%-65% 画宽)挖掉, 露颈肤色保留."""
+    m = _shoulder_fixture(mask_top=120)
+    subj = np.zeros((200, 200), dtype=np.uint8)
+    subj[40:180, 50:150] = 1
+    ext = {"sleeve": "short", "neckline": "open"}
+    out = pp.shoulder_complete_mask(
+        m, Image.new("RGB", (200, 200)), ext, subject_mask=subj, pose_kp={"shoulder": (0.5, 0.45, 0.9)}
+    )
+    # 接缝(顶行±4px)之外的补全行: 中央条带必须为 0
+    assert (out[90:112, 70:130] == 0).all(), "开领中央条带(颈区)必须挖空"
+    assert (out[90:112, 55:65] > 127).all(), "条带两侧肩部仍要补"
+
+
+def test_shoulder_complete_sleeveless_no_fill():
+    import platform_presets as pp
+
+    """sleeveless 肩部露肤: 不补全, 原样返回."""
+    m = _shoulder_fixture(mask_top=120)
+    subj = np.zeros((200, 200), dtype=np.uint8)
+    subj[40:180, 50:150] = 1
+    out = pp.shoulder_complete_mask(
+        m, Image.new("RGB", (200, 200)), {"sleeve": "sleeveless", "neckline": "open"}, subject_mask=subj
+    )
+    assert out is m
+
+
+def test_shoulder_complete_top_above_shoulder_no_fill():
+    import platform_presets as pp
+
+    """掩膜顶行已在肩行之上(短发款正常几何): 无空档, 原样返回."""
+    m = _shoulder_fixture(mask_top=80)  # 顶行 80 < fill_top 88
+    subj = np.zeros((200, 200), dtype=np.uint8)
+    subj[40:180, 50:150] = 1
+    out = pp.shoulder_complete_mask(m, Image.new("RGB", (200, 200)), None, subject_mask=subj)
+    assert out is m
+
+
+def test_shoulder_complete_no_pose_no_fill(monkeypatch):
+    import platform_presets as pp
+
+    """pose 不可用: 对齐层不做猜测性补全, 原样返回."""
+    monkeypatch.setattr(pp, "_detect_pose_keypoints", lambda *a, **k: None)
+    m = _shoulder_fixture(mask_top=120)
+    out = pp.shoulder_complete_mask(m, Image.new("RGB", (200, 200)), None, subject_mask=None)
+    assert out is m
+
+
+def test_shoulder_complete_low_vis_shoulder_no_fill():
+    import platform_presets as pp
+
+    """肩点置信度 <0.3: 不补."""
+    m = _shoulder_fixture(mask_top=120)
+    kp = {"shoulder": (0.5, 0.45, 0.2)}
+    out = pp.shoulder_complete_mask(m, Image.new("RGB", (200, 200)), None, pose_kp=kp)
+    assert out is m
+
+
+def test_shoulder_complete_pil_in_pil_out():
+    import platform_presets as pp
+
+    """PIL 输入返回 PIL L(双类型兼容, 与 limit_mask_to_subject 同口径)."""
+    m = _shoulder_fixture(mask_top=120)
+    subj = np.zeros((200, 200), dtype=np.uint8)
+    subj[40:180, 50:150] = 1
+    pil_in = Image.fromarray(m, "L")
+    out = pp.shoulder_complete_mask(
+        pil_in, Image.new("RGB", (200, 200)), None, subject_mask=subj, pose_kp={"shoulder": (0.5, 0.45, 0.9)}
+    )
+    assert isinstance(out, Image.Image) and out.mode == "L"
+    assert (np.asarray(out)[88:114, 55:145] > 127).all()

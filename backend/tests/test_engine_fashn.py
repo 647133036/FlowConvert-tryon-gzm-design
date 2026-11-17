@@ -303,12 +303,15 @@ def test_compose_fashn_drawn_align_uses_refit_and_decoupled_masks(monkeypatch, t
     assert out.info["lock_identity"] is True
 
 
-def test_compose_fashn_ghost_print_erased_before_core_paste(monkeypatch, tmp_path):
-    """FASHN 自绘印花偏移出核心场(r9 真实数据: 上方半透明重影): 生成图上
-    检出鬼场 → 先恒等参数贴回擦除(色调匹配 ref, 防 gen 鬼影区明暗场/褶皱
-    带通把鬼影形状搬回), 再核心恒等贴印;
-    无鬼影 SKU(fake 输出全暗)保持单次贴印(前测 len==1 已守住)。
-    """
+def _setup_ghost_inpaint_scene(monkeypatch, tmp_path, resid_return):
+    """公共场景: fake FASHN 输出=暗芥末衣身+上方白墨鬼影块; 平铺参考
+    亮衣料+下半部白印花(核心场)。返回 (engine_fashn, reapply/inpaint/
+    resid 三个 spy 的记录列表)。r12 起鬼影擦除 = ghost_inpaint_pass
+    局部修补(Telea 只从笔画周边取色, 袖褶光影全保) + strict 残余亮块
+    小范围恒等贴回色调匹配参考兜底, 不再整场凸包贴回(r11 GPU 视觉
+    验收"衣袖失真")。"""
+    import sys as _sys
+
     import engine_sdxl
     import numpy as np
     import platform_presets
@@ -317,8 +320,7 @@ def test_compose_fashn_ghost_print_erased_before_core_paste(monkeypatch, tmp_pat
     from PIL import Image as PILImage
     from PIL import ImageDraw
 
-    # fake 输出: 暗芥末黄整幅 + 上方白墨鬼影(FASHN 把印花画偏, 576 原生糊化);
-    # 生成图衣身比平铺参考暗 ~25 灰阶 → 鬼影贴回必须先做色调匹配。
+    # 生成图衣身比平铺参考暗 ~25 灰阶 → 兜底贴回必须用色调匹配 ref
     fake_out = PILImage.new("RGB", (96, 96), (216, 198, 151))
     ImageDraw.Draw(fake_out).rectangle((24, 18, 44, 38), fill=(255, 255, 255))
 
@@ -328,8 +330,6 @@ def test_compose_fashn_ghost_print_erased_before_core_paste(monkeypatch, tmp_pat
 
         def __call__(self, **kwargs):
             return types.SimpleNamespace(images=[fake_out])
-
-    import sys as _sys
 
     import engine_fashn
 
@@ -362,6 +362,22 @@ def test_compose_fashn_ghost_print_erased_before_core_paste(monkeypatch, tmp_pat
     monkeypatch.setattr(preserve_refit, "protect_inverse_refit", lambda r, b, m, feather_px=4: r)
     monkeypatch.setattr(platform_presets, "force_white_background", lambda result, subject_mask=None: result)
 
+    inpaint_calls = []
+    _real_inpaint = preserve_refit.ghost_inpaint_pass
+
+    def _inpaint(img, mask, **k):
+        inpaint_calls.append(np.asarray(mask).copy())
+        return _real_inpaint(img, mask, **k)
+
+    resid_calls = []
+
+    def _resid(img, cloth_ref, keep, core, **k):
+        resid_calls.append(np.asarray(img).copy())
+        return resid_return
+
+    monkeypatch.setattr(preserve_refit, "ghost_inpaint_pass", _inpaint)
+    monkeypatch.setattr(preserve_refit, "ghost_strict_residual", _resid)
+
     garment = tmp_path / "g.png"
     flat = PILImage.new("RGB", (64, 80), (255, 255, 255))
     d = ImageDraw.Draw(flat)
@@ -371,36 +387,83 @@ def test_compose_fashn_ghost_print_erased_before_core_paste(monkeypatch, tmp_pat
     flat.save(garment)
     person = tmp_path / "p.png"
     PILImage.new("RGB", (40, 60), (10, 20, 30)).save(person)
+    return engine_fashn, reapply_calls, inpaint_calls, resid_calls
 
-    out = engine_fashn.compose_tryon_fashn(person, garment, "women", "dress", 144, "white", "western_europe")
+
+def test_compose_fashn_ghost_erase_inpaint_no_residual(monkeypatch, tmp_path):
+    """鬼影擦除=局部修补优先: inpaint 填笔画后 strict 残余为空 → 不再有
+    鬼场整块贴回, 只剩单次核心恒等贴印(r11 GPU 整场贴回把袖区 26.5k
+    自然袖料拍平 → 视觉验收"衣袖失真")。"""
+    import numpy as np
+
+    engine_fashn, reapply_calls, inpaint_calls, resid_calls = _setup_ghost_inpaint_scene(
+        monkeypatch, tmp_path, resid_return=None
+    )
+    out = engine_fashn.compose_tryon_fashn(
+        str(tmp_path / "p.png"), str(tmp_path / "g.png"), "women", "dress", 144, "white", "western_europe"
+    )
     assert out.info["detail_applied"] is True
     assert "ghost" not in out.info.get("degraded_reason", ""), out.info.get("degraded_reason")
-    # 鬼影擦除(先, 恒等参数防明暗场回搬) + 核心恒等贴印(后, light/hf/folds 全关)
-    assert len(reapply_calls) == 2, f"expect ghost erase + core paste, got {len(reapply_calls)}"
-    ghost_mask, ghost_kw, ghost_ref = reapply_calls[0]
-    core_mask, core_kw, core_ref = reapply_calls[1]
-    assert ghost_mask.shape[0] == 144 and core_mask.shape[0] == 144
-    assert (
-        ghost_kw.get("light_strength", 1.0) == 0.0
-        and ghost_kw.get("hf_strength", 1.0) == 0.0
-        and ghost_kw.get("fold_gain", 1.0) == 0.0
-    ), "鬼场擦除必须恒等参数(gen 鬼影区明暗场/褶皱带通会把鬼影形状搬回)"
+    # inpaint 恰好一次, 输入掩膜盖住鬼影本体(96 (24,18)-(44,38) → 144 中心 [42,51])
+    assert len(inpaint_calls) == 1
+    gmask = inpaint_calls[0]
+    assert gmask.shape[0] == 144
+    assert gmask[42, 51] > 0, "鬼影本体中心必须在修补掩膜内"
+    # 残余检测收到了 inpaint 后的图, 鬼影中心已被填成非白(Telea 从周边取色)
+    assert len(resid_calls) == 1
+    s1 = resid_calls[0]
+    assert s1[42, 51].mean() < 250, "inpaint 后鬼影中心不得残留纯白"
+    # 无残余 → 无兜底 reapply, 只剩核心恒等贴印(细笔触 1px 羽化)
+    assert len(reapply_calls) == 1, f"expect core paste only, got {len(reapply_calls)}"
+    core_mask, core_kw, _core_ref = reapply_calls[0]
+    assert core_mask.shape[0] == 144
     assert core_kw.get("light_strength") == 0.0 and core_kw.get("fold_gain") == 0.0
     assert core_kw.get("feather_px") == 1.0, "核心场细笔触贴印必须 1px 羽化(5px 把笔触 alpha 压到 0.2-0.4)"
-    # 色调匹配: 鬼场贴回的 ref 已平移到生成图衣身色调(暗芥末 ~188 均亮), 核心贴印仍用原始亮参考
-    _gr = np.asarray(ghost_ref.convert("RGB"), np.float32)
-    _gm = np.asarray(ghost_mask) > 0
-    _gen_garment_lum = (216 + 198 + 151) / 3.0
-    assert abs(_gr[_gm].mean() - _gen_garment_lum) < 8, (
-        f"鬼场贴回 ref 均亮 {_gr[_gm].mean():.0f} 应贴近生成图衣身 {_gen_garment_lum:.0f}"
-    )
-    _cr = np.asarray(core_ref.convert("RGB"), np.float32)
-    assert _cr[_gm].mean() - _gen_garment_lum > 15, "核心贴印必须保持原始亮参考(白墨印花本身亮)"
-    # 鬼场盖住鬼影本体(96 尺度 (24,18)-(44,38) → 144 x1.5), 不侵入核心
-    assert ghost_mask[42, 51] > 0, "鬼影本体中心必须在擦除场内"
-    gys, _gxs = np.where(ghost_mask > 0)
+    # 鬼影(上方)与核心场(下方)必须分离
+    gys, _gxs = np.where(gmask > 0)
     cys, _cxs = np.where(core_mask > 0)
-    assert gys.max() < cys.min(), "鬼场(上方)与核心场(下方)必须分离"
+    assert gys.max() < cys.min()
+
+
+def test_compose_fashn_ghost_residual_fallback_pastes_matched_ref(monkeypatch, tmp_path):
+    """密集笔画网 inpaint 填不净(r11 实测残余 8957px): strict 残余检测
+    非空 → 小范围恒等贴回色调匹配参考兜底(恒等参数防 gen 鬼影区明暗
+    场/褶皱带通把鬼影形状搬回), 再核心恒等贴印。"""
+    import numpy as np
+
+    resid_mask = np.zeros((144, 144), dtype=np.uint8)
+    resid_mask[27:66, 36:57] = 255
+    engine_fashn, reapply_calls, inpaint_calls, _resid_calls = _setup_ghost_inpaint_scene(
+        monkeypatch, tmp_path, resid_return=resid_mask
+    )
+    out = engine_fashn.compose_tryon_fashn(
+        str(tmp_path / "p.png"), str(tmp_path / "g.png"), "women", "dress", 144, "white", "western_europe"
+    )
+    assert out.info["detail_applied"] is True
+    assert "ghost" not in out.info.get("degraded_reason", ""), out.info.get("degraded_reason")
+    assert len(inpaint_calls) == 1, "兜底前必须先做局部修补"
+    # 兜底贴回(先) + 核心贴印(后)
+    assert len(reapply_calls) == 2, f"expect residual fallback + core paste, got {len(reapply_calls)}"
+    fb_mask, fb_kw, fb_ref = reapply_calls[0]
+    core_mask, core_kw, _core_ref = reapply_calls[1]
+    assert fb_mask.shape[0] == 144 and core_mask.shape[0] == 144
+    assert (
+        fb_kw.get("light_strength", 1.0) == 0.0
+        and fb_kw.get("hf_strength", 1.0) == 0.0
+        and fb_kw.get("fold_gain", 1.0) == 0.0
+    ), "兜底贴回必须恒等参数(gen 鬼影区明暗场/褶皱带通会把鬼影形状搬回)"
+    assert core_kw.get("feather_px") == 1.0
+    # 兜底贴回的 ref 已平移到生成图衣身色调(暗芥末 ~188 均亮)
+    _fr = np.asarray(fb_ref.convert("RGB"), np.float32)
+    _fm = np.asarray(fb_mask) > 0
+    _gen_garment_lum = (216 + 198 + 151) / 3.0
+    assert abs(_fr[_fm].mean() - _gen_garment_lum) < 8, (
+        f"兜底贴回 ref 均亮 {_fr[_fm].mean():.0f} 应贴近生成图衣身 {_gen_garment_lum:.0f}"
+    )
+    # 鬼影(上方)与核心场(下方)必须分离
+    gys, _gxs = np.where(fb_mask > 0)
+    cys, _cxs = np.where(core_mask > 0)
+    assert gys.max() < cys.min()
 
 
 def test_compose_fashn_template_align_env_restores_legacy(monkeypatch, tmp_path):
