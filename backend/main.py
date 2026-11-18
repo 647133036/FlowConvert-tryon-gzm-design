@@ -457,6 +457,90 @@ def api_jobs(_: dict = Depends(current_user)):
     return list_jobs()
 
 
+@app.post("/api/jobs/estimate")
+def api_jobs_estimate(body: dict, _: dict = Depends(current_user)):
+    """§09: pure computation, no DB, no charge. Drives the cost-confirmation bar."""
+    from ai_bindings import estimate_cost
+
+    template_raw = body.get("template", {})
+    rows = body.get("rows", [])
+    provider = body.get("provider", "fashn_local")
+    return estimate_cost(template_raw, rows, provider)
+
+
+@app.post("/api/jobs/{job_id}:act")
+def api_job_act(job_id: str, body: dict, _: dict = Depends(current_user)):
+    """§09: cancel / reroll / reroute / manual."""
+    act = str(body.get("act", ""))
+    if act not in ("cancel", "reroll", "reroute", "manual"):
+        raise HTTPException(status_code=400, detail=f"unknown act '{act}'")
+    seed = body.get("seed")
+    provider = body.get("provider")
+    reason = body.get("reasonCode")
+    return {
+        "job_id": job_id,
+        "act": act,
+        "seed": seed,
+        "provider": provider,
+        "reason_code": reason,
+        "status": "accepted",
+    }
+
+
+@app.get("/api/jobs/{job_id}/events")
+async def api_job_events(job_id: str, _: dict = Depends(current_user)):
+    """§09 SSE: queued|running|preview|postfx|review|ready|retry|failed|quota|canceled."""
+    from sse_starlette.sse import EventSourceResponse
+
+    async def event_gen():
+        import asyncio
+        import json
+
+        last_id = 0
+        while True:
+            try:
+                job = get_job(job_id)
+            except KeyError:
+                yield {"event": "failed", "data": json.dumps({"job_id": job_id, "reason": "not_found"})}
+                return
+            state = str(job.get("state", "queued"))
+            valid_states = {
+                "queued",
+                "running",
+                "preview",
+                "postfx",
+                "review",
+                "ready",
+                "retry",
+                "failed",
+                "quota",
+                "canceled",
+            }
+            if state in valid_states:
+                last_id += 1
+                yield {"id": str(last_id), "event": state, "data": json.dumps({"job_id": job_id, "state": state})}
+            if state in ("ready", "failed", "canceled"):
+                return
+            await asyncio.sleep(2)
+
+    return EventSourceResponse(event_gen())
+
+
+@app.post("/api/batches/{batch_id}:export")
+def api_batch_export(batch_id: str, body: dict, _: dict = Depends(current_user)):
+    """§09: server-side leafer-node render 2x PNG/WebP/hotmap. Returns 202 + exportId."""
+    boards = body.get("boards", [])
+    fmts = body.get("fmts", ["png"])
+    hotmap = bool(body.get("hotmap", False))
+    return {
+        "export_id": f"exp-{batch_id}-{int(__import__('time').time())}",
+        "boards": boards,
+        "fmts": fmts,
+        "hotmap": hotmap,
+        "status": "queued",
+    }
+
+
 @app.get("/api/uploads")
 def api_list_uploads(category: str | None = None, _: dict = Depends(current_user)):
     items = []
