@@ -397,3 +397,16 @@ Entries discovered by the Agent during task execution should follow this format:
   - 修复方向: delta_row 逐行平滑(行间限幅/双线性)消除带边界跳变; 贴回区扩展到袖口/
     领口前必须先解决该跳变, 否则扩区=扩大劣化面。
   - r13 相关 L2 骨架(/tmp/opencode/ai-tryon-platform/)已停工(基于 r13 通过的错误前提)。
+
+[电商合规标准件 + 5 平台推送骨架]
+- Date: 2026-11-18
+- Context: 用户要求"质检和合规做成标准件", 后端对接 5 电商渠道(亚马逊/Shopify/速卖通/TikTok/独立站)
+- Category: Operations & Deployment
+- Instructions:
+  - 合规标准件 = backend/compliance.py: 声明式 ComplianceRules 5 平台(shopify/amazon/aliexpress/tiktok/independent_site),
+    检测原语纯 CPU(白底占比/边缘水印扫描/文件体积/宽高比), 输出 compliance_report JSON
+  - 合规 fail → delivery_tier 强制 review(人工验收), 合规不阻断出图(检测异常降级 warning)
+  - 平台注册: PLATFORM_PRESETS + PUSHERS 5 渠道, 新加平台只加一条规则集 + 一行注册
+  - 推送适配器骨架: Amazon SP-API / AliExpress / TikTok Shop 仅凭据校验+占位返回, 需 API Key 联调;
+    独立站 Webhook 已实现(multipart 上传, SSRF 防护同 Shopify)
+  - 客户画像: 精品/品牌卖家算"上架时间+退货率+合规风险", 工贸一体批量大流程固定
