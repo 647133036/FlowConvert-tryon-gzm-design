@@ -180,9 +180,7 @@ def test_aidge_429_honors_retry_after(monkeypatch, tmp_path):
         if getattr(req, "data", None) is None:
             return _FakeResponse(_jpeg_bytes(_img(size=(512, 768), color=(5, 5, 5))))
         if len(calls) == 1:
-            raise urllib.error.HTTPError(
-                "u", 429, "Too Many Requests", {"Retry-After": "3"}, io.BytesIO(b"rate")
-            )
+            raise urllib.error.HTTPError("u", 429, "Too Many Requests", {"Retry-After": "3"}, io.BytesIO(b"rate"))
         return _FakeResponse({"Data": {"ImageUrl": "https://oss.example.com/x.jpg"}})
 
     monkeypatch.setattr(tp.urllib.request, "urlopen", fake_urlopen)
@@ -274,5 +272,68 @@ def test_provider_status_shape(monkeypatch):
     st = tp.provider_status()
     assert st["active"] == "fashn_local"
     assert "aidge" in st and "fashn_local" in st
+    assert "viapi" in st
     assert "unimplemented" in st and "fashn_api" in st["unimplemented"]
     assert st["pipeline_version"] == tp.PIPELINE_VERSION
+
+
+def test_provider_status_lists_five_pipelines(monkeypatch):
+    """5 条电商换衣管线: FASHN / SDXL / 百炼(aidge) / VIAPI / 第三方 预留位。"""
+    tp._BREAKERS.clear()
+    st = tp.provider_status()
+    pipes = st["pipelines"]
+    for key in ("fashn_local", "sdxl", "aidge", "viapi", "third_party"):
+        assert key in pipes, f"缺管线 {key}: {sorted(pipes)}"
+    # 价格表覆盖可计费管线
+    for key in ("fashn_local", "aidge", "viapi"):
+        assert key in tp.PROVIDER_PRICES
+
+
+def test_select_model_name_by_provider(monkeypatch):
+    """百炼/VIAPI 同源 aidge 端点换 model 名。"""
+    monkeypatch.delenv("VTON_PROVIDER_MODEL", raising=False)
+    monkeypatch.setenv("VTON_PROVIDER", "aidge-plus")
+    assert tp.select_model_name() == "aitryon-plus"
+    monkeypatch.setenv("VTON_PROVIDER", "aidge-refiner")
+    assert tp.select_model_name() == "aitryon-refiner"
+    monkeypatch.setenv("VTON_PROVIDER", "viapi")
+    assert tp.select_model_name() == "aitryon"
+    monkeypatch.setenv("VTON_PROVIDER", "aidge")
+    assert tp.select_model_name() == "aitryon"
+    # 覆盖位优先
+    monkeypatch.setenv("VTON_PROVIDER_MODEL", "custom-x")
+    assert tp.select_model_name() == "custom-x"
+
+
+def test_active_provider_viapi_and_third_party_route_to_aidge(monkeypatch):
+    """viapi / third_party 预留位 都映射到 aidge 端点(同源换模型)。"""
+    tp._BREAKERS.clear()
+    for sel in ("viapi", "third_party"):
+        monkeypatch.setenv("VTON_PROVIDER", sel)
+        monkeypatch.setenv("AIDGE_API_KEY", "sk-test")
+        monkeypatch.setenv("AIDGE_PUBLIC_BASE_URL", "https://demo.example.com")
+        assert tp.active_provider() == "aidge"
+
+
+def test_aidge_generate_sends_model_name(monkeypatch, tmp_path):
+    """aidge payload 带 Model 名(百炼/VIAPI 换模型), 落图 info 记 provider_model。"""
+    import store
+
+    monkeypatch.setattr(store, "UPLOADS", tmp_path)
+    _enable_aidge(monkeypatch, tmp_path)
+    monkeypatch.setenv("VTON_PROVIDER", "aidge-plus")
+    monkeypatch.delenv("VTON_PROVIDER_MODEL", raising=False)
+    out_img = _img(size=(512, 768), color=(9, 9, 9))
+    seen = {}
+
+    def fake_urlopen(req, timeout=None):
+        if isinstance(req, str):
+            return _FakeResponse(_jpeg_bytes(out_img))
+        body = json.loads(req.data.decode("utf-8"))
+        seen["model"] = body.get("Model")
+        return _FakeResponse({"Data": {"ImageUrl": "https://oss.example.com/signed.jpg"}, "RequestId": "rid-1"})
+
+    monkeypatch.setattr(tp.urllib.request, "urlopen", fake_urlopen)
+    img = tp.aidge_generate(_img(), _img(), "upper")
+    assert seen["model"] == "aitryon-plus"
+    assert img.info["provider_model"] == "aitryon-plus"

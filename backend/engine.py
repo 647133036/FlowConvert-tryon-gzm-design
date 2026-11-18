@@ -1318,6 +1318,8 @@ def engine_status() -> dict:
         "commercial_compliant": commercial_compliant,
         "compliance_advice": _get_compliance_advice(engine, _LICENSE_MODE, sdxl_avail, fashn_avail),
         "providers": providers,
+        # 5 条电商换衣管线(FASHN / SDXL / 百炼 / VIAPI / 第三方预留), 前端可枚举。
+        "pipelines": providers.get("pipelines", {}) if isinstance(providers, dict) else {},
         "weights_dir": str(WEIGHTS_DIR),
         "idm_vton_dir": str(_IDM_DIR),
         "sdxl_dir": str(_REPO_ROOT / "models" / "sdxl"),

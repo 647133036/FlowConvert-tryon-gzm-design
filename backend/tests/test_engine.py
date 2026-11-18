@@ -174,6 +174,17 @@ def test_engine_status_shape():
     )
 
 
+def test_engine_status_lists_five_pipelines():
+    """engine_status 顶层 pipelines 键: 5 条电商换衣管线可被前端枚举。"""
+    from engine import engine_status
+
+    s = engine_status()
+    pipes = s.get("pipelines")
+    assert pipes, "engine_status 缺顶层 pipelines 键"
+    for key in ("fashn_local", "sdxl", "aidge", "viapi", "third_party"):
+        assert key in pipes, f"pipelines 缺 {key}: {sorted(pipes)}"
+
+
 def test_silhouette_scale_is_smooth_and_bounded():
     import numpy as np
 

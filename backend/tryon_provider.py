@@ -29,20 +29,33 @@ logger = logging.getLogger("atelier.tryon_provider")
 
 PIPELINE_VERSION = os.environ.get("VTON_PIPELINE_VERSION", "0.2.0")
 
-# §06 价格表(分/张, env 可覆盖): fashn_local 为 GPU 摊薄估算值。
+# §06 价格表(分/张, env 可覆盖): fashn_local 为 GPU 摊薄估算值;
+# 百炼 aidge(AiTryOn 系) 按 AIDGE_COST_CENT; VIAPI 独立按次入口。
 PROVIDER_PRICES = {
     "fashn_local": int(os.environ.get("VTON_FASHN_LOCAL_COST_CENT", "5")),
     "aidge": int(os.environ.get("AIDGE_COST_CENT", "15")),
+    "viapi": int(os.environ.get("VIAPI_COST_CENT", "15")),
 }
 PROVIDER_ETA_SEC = {
     "fashn_local": 9,
     "aidge": 6,
+    "viapi": 6,
+}
+# 5 条电商换衣管线(§07 注册表): FASHN / SDXL / 百炼(aidge) / VIAPI / 第三方。
+# 未实现的登记为不可用占位(换引擎不动业务), 可路由、可占位、不可用时降级。
+PROVIDER_PIPELINE = {
+    "fashn_local": "FASHN VTON v1.5 (本地 pixel-space, 商用)",
+    "sdxl": "SDXL 商用试穿",
+    "aidge": "阿里云百炼 AiTryOn (aitryon 系, 同步 API)",
+    "viapi": "阿里云视觉智能开放平台 VIAPI 虚拟试衣 (按次)",
+    "third_party": "第三方 API 预留接入位 (custom provider hook)",
 }
 # §07 注册表: 未实现的 Provider 也注册, 给出不可用原因(换引擎不动业务)。
 UNIMPLEMENTED_PROVIDERS = {
     "fashn_api": "FASHN hosted API provider not implemented (local + aidge active)",
     "leap": "Leap provider not implemented",
     "volc": "Volc provider not implemented (scene/background swap)",
+    "third_party": "预留第三方 API 接入位: 实现一个 Provider 钩子(§08 生成源无感) 即插即用",
 }
 
 AIDGE_ENDPOINT = os.environ.get("AIDGE_ENDPOINT", "https://aidge.aliyuncs.com")
@@ -51,6 +64,11 @@ AIDGE_API_VERSION = os.environ.get("AIDGE_API_VERSION", "2026-04-28")
 AIDGE_TIMEOUT = float(os.environ.get("AIDGE_TIMEOUT", "120"))
 AIDGE_BREAKER_SECONDS = float(os.environ.get("AIDGE_BREAKER_SECONDS", "1800"))
 AIDGE_MAX_RETRIES = max(0, int(os.environ.get("AIDGE_MAX_RETRIES", "3")))
+
+# 百炼 / VIAPI 模型名: 同一 aidge 端点, 换 model 名走不同试穿模型
+# (百炼 aitryon 系: aitryon / aitryon-plus / aitryon-refiner; VIAPI 虚拟试衣
+# 独立按次入口, 同源)。model 名进幂等键(generation_mode), 换模型=换出图。
+AIDGE_MODEL = os.environ.get("AIDGE_MODEL", "aitryon")
 
 # 内部 garment_type(upper/tunic/lower/dress/onesie) → Aidge ClothType 枚举。
 # onesie/连体衣 Aidge 无对应枚举, 就近映射 dresses(整件单衣语义)。
@@ -126,10 +144,14 @@ def file_sha256(path: Path) -> str:
 
 
 def generation_mode() -> str:
-    """mode = steps/guidance; 改生成参数 = 换出图, 必须进幂等键。"""
+    """mode = steps/guidance; 改生成参数 = 换出图, 必须进幂等键。
+
+    aidge model 名(百炼/VIAPI 换模型)同样进键: 换模型=换出图, 缓存须失效。
+    """
     steps = os.environ.get("VTON_FASHN_STEPS", "30")
     guidance = os.environ.get("VTON_FASHN_GUIDANCE", "1.5")
-    return f"steps{steps}-cfg{guidance}"
+    model = os.environ.get("VTON_PROVIDER_MODEL", "").strip() or AIDGE_MODEL
+    return f"steps{steps}-cfg{guidance}-m{model}"
 
 
 def idem_key(
@@ -191,12 +213,13 @@ def aidge_available() -> tuple[bool, str]:
 
 def active_provider() -> str:
     sel = select_provider()
-    if sel in ("aidge", "auto"):
+    # aidge / viapi 都走 aidge 端点(换 model 名); 第三方预留位暂映射 aidge。
+    if sel in ("aidge", "viapi", "third_party", "auto"):
         ok, reason = aidge_available()
         if ok:
             return "aidge"
-        if sel == "aidge":
-            logger.warning("VTON_PROVIDER=aidge but unavailable (%s); falling back to fashn_local", reason)
+        if sel in ("aidge", "viapi", "third_party"):
+            logger.warning("VTON_PROVIDER=%s but unavailable (%s); falling back to fashn_local", sel, reason)
     return "fashn_local"
 
 
@@ -212,10 +235,15 @@ def provider_status() -> dict:
             "cost_cent": PROVIDER_PRICES["aidge"],
             "eta_sec": PROVIDER_ETA_SEC["aidge"],
         },
+        "viapi": {
+            "cost_cent": PROVIDER_PRICES["viapi"],
+            "eta_sec": PROVIDER_ETA_SEC["viapi"],
+        },
         "fashn_local": {
             "cost_cent": PROVIDER_PRICES["fashn_local"],
             "eta_sec": PROVIDER_ETA_SEC["fashn_local"],
         },
+        "pipelines": dict(PROVIDER_PIPELINE),
         "unimplemented": dict(UNIMPLEMENTED_PROVIDERS),
     }
 
@@ -333,11 +361,34 @@ def _download_image(url: str) -> Image.Image:
     return img
 
 
+def select_model_name() -> str:
+    """按 VTON_PROVIDER 选 aidge 端点的 model 名(百炼/VIAPI 同源换模型)。
+
+    - aidge/aidge-plus/aidge-refiner: 百炼 AiTryOn 系 (aitryon / aitryon-plus / aitryon-refiner)
+    - viapi: VIAPI 虚拟试衣 (默认同 aitryon, 可被 VTON_PROVIDER_MODEL 覆盖)
+    - 其它: 回退 AIDGE_MODEL
+    第三方预留位: 由实现者提供自定义 model/hook, 此处仅登记占位。
+    """
+    override = os.environ.get("VTON_PROVIDER_MODEL", "").strip()
+    if override:
+        return override
+    sel = select_provider()
+    model_by_provider = {
+        "aidge": "aitryon",
+        "aidge-plus": "aitryon-plus",
+        "aidge-refiner": "aitryon-refiner",
+        "viapi": "aitryon",
+        "third_party": "aitryon",
+    }
+    return model_by_provider.get(sel, AIDGE_MODEL)
+
+
 def aidge_generate(base_img: Image.Image, garment_img: Image.Image, garment_type: str) -> Image.Image:
     """阿里 AiTryOn 单图试穿(同步 1K)。
 
     返回 RGB 图, info 带 provider/provider_cost_cent; 引擎层共用同一条
-    POSTFX 链(preserve/protect), 生成源无感(§08)。
+    POSTFX 链(preserve/protect), 生成源无感(§08)。model 名随 payload 透传,
+    百炼 aitryon 系 / VIAPI 同源换模型。
     """
     cloth = AIDGE_CLOTH_TYPE.get((garment_type or "").lower())
     if not cloth:
@@ -345,10 +396,12 @@ def aidge_generate(base_img: Image.Image, garment_img: Image.Image, garment_type
         cloth = "tops"
     person = _constrain_for_aidge(base_img.convert("RGB"))
     garment = _constrain_for_aidge(garment_img.convert("RGB"))
+    model = select_model_name()
     payload = {
         "ModelImageUrl": _stage_for_aidge(person, "person"),
         "ClothImageUrl": [_stage_for_aidge(garment, "cloth")],
         "ClothType": cloth,
+        "Model": model,
         "Resolution": "1K",
         "Mode": "lite",
     }
@@ -359,6 +412,7 @@ def aidge_generate(base_img: Image.Image, garment_img: Image.Image, garment_type
     # §11 R3: 签名 URL 有过期时间, 必须立刻下载; 只存 URL = 账在图没在。
     img = _download_image(image_url).convert("RGB")
     img.info["provider"] = "aidge"
+    img.info["provider_model"] = model
     img.info["provider_cost_cent"] = PROVIDER_PRICES["aidge"]
     img.info["provider_req_id"] = str(data.get("RequestId") or "")
     return img
