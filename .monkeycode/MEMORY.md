@@ -12,7 +12,17 @@ This file records user instructions, preferences, and teachings for reference in
   - shoulder1_info.json changed_px_abs=0 (与 r13 一致, 肩部贴合是生成层缺陷, POSTFX 无法修)
   - core band step max 指标(行带 648..1305 全量) = 176, 但这是 final 全图相邻行差, 含 REAPPLY 等后处理层, 非 anchor_ref_local 单函数输出; 贴回区内 delta 跳变须看 anchor1_out - tone1_matched_ref
   - s0_fashn_raw 是 768x576, final_2048 是 2048x1536, 对比前须 resize gen 到 final 尺寸
-  - r14 图已输出到 /workspace/r14_review/ 供用户视觉验收
+  - r15 图已输出到 /workspace/r14_review/ (r15_final_RAW.png) 供用户视觉验收
+
+[r15 RAW 直出验证]
+- Date: 2026-11-18
+- Context: Discovered by Agent while running r15 GPU round with VTON_POSTFX=0
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - r15 VTON_POSTFX=0 验证: final_2048.png == s0_fashn_raw.png (md5 一致), 576x768 原生直出, 无 resize 到 2048
+  - 元数据: lock_identity=False, detail_applied=False, print_fidelity=None (POSTFX 链路全跳过, 符合预期)
+  - 跑时 31.8s (r14 POSTFX=1 全链路 64.9s, RAW 直出省一半时间)
+  - 冒烟 smoke 因 FASHN 权重缺失仍 rc=1 (与 r14 一致, 冒烟检查的是本地 FASHN 权重路径, 与 POSTFX 无关)
 
 [r14 POSTFX 净负 → RAW 直出开关]
 - Date: 2026-11-18
