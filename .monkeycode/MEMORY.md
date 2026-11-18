@@ -269,3 +269,73 @@ Entries discovered by the Agent during task execution should follow this format:
     构造行渐变数据必须逐行显式赋值, 禁用 `arr[:,:] = vec[:,None]`;
     `[...]`/`[..., None]` 尾接与同 ndim 广播两种语义一致, 安全。
   - 生产代码已审计无前导补维依赖; 新写图像处理代码优先显式 repeat/tile/逐行循环。
+
+[Project Knowledge Summary]
+- Date: 2026-11-18
+- Context: Discovered by Agent while closing r13 GPU round (visual verdict correction)
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - r13 未通过肉眼验收(用户 2026-11-18 判定): 缺陷三层——①GEN 图"衣服贴上去而非穿上去",
+    衣服未盖住肩膀(shoulder pass 因 shoulder_y 检测 null, changed_px_abs=0 未生效);
+    ②r12 回贴图案错位(非商品图图案); ③r13 只贴胸口核心场, 袖口/衣领图案仍为 FASHN
+    生成错版, 未回贴。print_fidelity 1.0 只保证胸口核心, 不覆盖全服装图案。
+  - 后续修向: 贴回掩膜扩展到全部图案显著区(袖口/领口/下摆) + 肩部几何修复
+    (先确认商品图是否露肩款); 机器指标(缝线 delta/fidelity)不能替代用户肉眼验收。
+
+[Project Knowledge Summary]
+- Date: 2026-11-18
+- Context: r13 视觉验收驳回后的像素+图像分析诊断(image_analysis 读 dump)
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - r13 对本 SKU(khaite goya silk top)回贴是净负向: 胸口区 FINAL 比 FASHN raw 更差
+    (猴图案糊化+方块状/涂抹伪影, raw 的图案更连贯清晰) —— 贴回未修复反劣化,
+    对该 SKU 应"仅 raw 交付"而非贴回。
+  - 商品实为尖领纽扣衬衫(双猴胸前印花, 黄绿渐变+竖纹布面), 有常规肩袖;
+    FINAL 肩部几何上被覆盖(shoulder pass changed 0px 因检测失败但 drawn 覆盖肩部),
+    "衣服没盖住肩膀"的观感源于 ①领口/颈发交界混合不自然 ②整体"贴片感"数字伪影。
+  - 袖口: FINAL 与商品平铺黄竖纹基本一致(用户"袖口图案不符"在该区较弱, 主责在
+    领口/胸口贴回区劣化)。
+  - 教训: print_fidelity 1.0 只保证贴回区=参考区, 不保证观感; 机器指标全绿仍可能
+    视觉翻车, 用户肉眼验收是唯一收口标准。
+  - 贴回修不了生成层几何(衣服贴上去/露肩观感=生成缺陷, 需生成侧投影改进或换种子)。
+
+[Project Knowledge Summary]
+- Date: 2026-11-18
+- Context: r13 驳回定位: 涂抹块根因(对 /tmp/opencode/gpu_results/r13_bundle 离线复算)
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - r13 涂抹感根因 = 行带锚定 delta_row 的行边界跳变: REAPPLY2 胸口核心与 RAW 的差异集中在
+    y=672-676(核心顶边界, mean|Δ|≈46)与 y=823-851(核心内带边界, mean|Δ|≈43),
+    即 ±24 行窗环样本起止处 delta 突变 → 可见条带。块均值相邻行差 REAPPLY2 mean 9.83
+    vs RAW 7.53(>2 行数 29/37)。
+  - 对本 SKU(khaite goya 双猴)贴回净负向: 胸口核心细节能量 REAPPLY2/FINAL 4.36/6.02
+    行/列 vs RAW 0.91/1.53(3-4x), 图案糊化; 正确交付 = 仅 raw 出图。
+  - 修复方向: delta_row 行边界处做平滑(窗口内样本覆盖度加权/双线性过渡), 消除带边界跳变;
+    沙箱离线即可验证(用 r13_bundle dump), 不烧 GPU。
+
+[Project Knowledge Summary]
+- Date: 2026-11-18
+- Context: r13 驳回定位 —— 行带锚定涂抹块根因(r13_bundle 离线复算)
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - r13 "涂抹/方块"根因 = 行带锚定 delta_row 的行边界跳变: 胸口核心 y=672-676(顶边界,
+    mean|Δ|≈46)与 y=823-851(内带边界, mean|Δ|≈43) 出现突变; 块均值相邻行差 REAPPLY2
+    9.83 vs RAW 7.53, >2 行数 29/37 → 贴回区出现横向条带, 观感"方块状/涂抹"。
+  - 胸口核心细节能量 REAPPLY2/FINAL 行4.36/列6.02 vs RAW 0.91/1.53(3-4x), 贴回把参考
+    布料的行带块边界叠加进图案 → 对本 SKU 贴回是净负向(正确交付=仅 raw)。
+  - 修复方向(r14): delta_row 按行平滑(如行差限幅/双线性), 消除带边界跳变; 沙箱对
+    r13_bundle dump 离线验证(改 preserve_refit.anchor_ref_local 后重放 reapply 段), 无需 GPU。
+
+[Project Knowledge Summary]
+- Date: 2026-11-18
+- Context: r13 驳回后定位"涂抹块"根因 —— 对 r13_bundle 各阶段 dump 离线复算
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - 涂抹块根因 = 行带锚定 delta_row 的行边界跳变: 胸口核心区 REAPPLY2 与 RAW 的逐行
+    差异集中在 y=672-676(核心顶边界, mean|Δ|=46.2)与 y=823-851(核心内带边界, ≈43),
+    即 ±24 行窗锚定的中位 delta 在窗内样本切换处突变 → 横向条带边界("行带状涂抹感")。
+  - 本 SKU(khaite goya 双猴)贴回净负向: 胸口细节能量 FINAL 行4.36/列6.02 vs RAW 行0.91/
+    列1.53(3-4x 突变密度), 图像分析确认 FINAL 胸口图案糊化劣于 raw。正确交付 = 仅 raw。
+  - 修复方向: delta_row 逐行平滑(行间限幅/双线性)消除带边界跳变; 贴回区扩展到袖口/
+    领口前必须先解决该跳变, 否则扩区=扩大劣化面。
+  - r13 相关 L2 骨架(/tmp/opencode/ai-tryon-platform/)已停工(基于 r13 通过的错误前提)。

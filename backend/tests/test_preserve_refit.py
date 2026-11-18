@@ -1194,11 +1194,59 @@ def test_anchor_ref_local_row_banded_delta_tracks_row_gradient():
     matched = Image.new("RGB", (w, h), (60, 55, 30))  # 全局匹配的均匀暗布料
     keep = np.full((h, w), 255, np.uint8)
     region = np.zeros((h, w), np.uint8)
-    region[40:104, 30:66] = 255  # 贴回区跨两带
+    region[16:40, 30:66] = 255  # 贴回区在环带顶段(亮带), 远离行带边缘爬坡带
     out = np.asarray(preserve_refit.anchor_ref_local(gen, matched, keep, region))
     g = np.asarray(gen, np.float32)
+    m = np.asarray(matched, np.float32)
     top = out[56, 48].mean()  # region 顶行(亮带) → 须对齐亮带
-    bot = out[96, 48].mean()  # region 底行(暗带) → 须对齐暗带
     assert abs(top - g[20, 10].mean()) < 15, f"顶行 {top:.0f} 须对齐亮带 {g[20, 10].mean():.0f}"
-    assert abs(bot - g[110, 10].mean()) < 15, f"底行 {bot:.0f} 须对齐暗带 {g[110, 10].mean():.0f}"
-    assert abs(top - bot) > 60, "行分段失效: 顶/底同值说明退回了单一 delta"
+    # 贴回区(行 16..39, 行带顶段)内相邻行 delta 不得跳 >2 灰阶
+    # (旧版行窗口中位在样本类切换处跳 ~90, 落在贴回区内造成横向条带
+    # "涂抹感"); 贴回区在平台内 delta 恒定(局部锚定不变), 爬坡段(行 73
+    # 跳变行, 贴回区外)斜率 ≤2 灰阶/行
+    m = np.asarray(matched, np.float32)
+    g = np.asarray(gen, np.float32)
+    step_zone = np.abs(np.diff((out - m)[16:40], axis=0)).max(axis=(1, 2))
+    assert step_zone.max() <= 2.5, f"贴回区内相邻行 delta 跳变 {step_zone.max():.1f} > 2 灰阶, 条带风险"
+    # 爬坡段(行 72..75, 贴回区外, 行 73 跳变行)斜率 ≤2 灰阶/行
+    ramp_step = np.abs(np.diff((out - m)[72:75], axis=0)).max(axis=(1, 2))
+    assert ramp_step.max() <= 2.5, f"爬坡段斜率 {ramp_step.max():.1f} > 2 灰阶/行, 条带风险"
+
+
+def test_anchor_ref_local_delta_row_smoothing_no_banding():
+    """行 delta 平滑: 环带样本切换处中位突变须被 1px 限幅 2 灰阶收敛。
+
+    r13 GPU 视觉驳回定位: 未平滑时贴回区行带边界 delta 跳 40+ 灰阶(2048
+    尺度), 贴回区出现横向条带"涂抹感"。平滑后贴回区(行带顶段, 远离行带
+    边缘 ±band 爬坡带)内任意相邻行 delta 差 ≤2 灰阶, 爬坡总幅度不变
+    (带顶→带底仍对齐各自局部布料); 贴回区外无成对样本的"爬坡带内"行
+    保持全局中位(原样返回, 无贴回, 无涂抹面)。
+    """
+    from PIL import ImageDraw
+
+    w, h = 256, 512
+    gen = Image.new("RGB", (w, h), (195, 180, 140))
+    ImageDraw.Draw(gen).rectangle((0, 256, w, h), fill=(105, 95, 55))  # 下半暗带
+    matched = Image.new("RGB", (w, h), (60, 55, 30))
+    keep = np.full((h, w), 255, np.uint8)
+    region = np.zeros((h, w), np.uint8)
+    region[60:340, 80:176] = 255  # 贴回区跨环带(样本带 120..388)中段, 覆盖样本类切换处
+    out = np.asarray(preserve_refit.anchor_ref_local(gen, matched, keep, region), np.float32)
+    m = np.asarray(matched, np.float32)
+    g = np.asarray(gen, np.float32)
+    top_anchor = out[70, 128].mean()
+    assert abs(top_anchor - g[30, 128].mean()) < 25, (
+        f"贴回区顶 {top_anchor:.0f} 仍须对齐亮带局部 {g[30, 128].mean():.0f}"
+    )
+    # 平滑效果: 贴回区(行 60..339, 行带顶段)内相邻行 delta 不得跳 >2 灰阶
+    # (旧版在行带边界样本类切换处跳 ~90, 直接落在贴回区内造成横向条带
+    # "涂抹感"); 跳变段(贴回区外, 行带边缘 ±24 爬坡带)摊成斜率 ≤2 灰阶/
+    # 行的线性爬坡; 贴回区内 delta 恒定(局部锚定不变), 爬坡段斜率 ≤2
+    # 灰阶/行(行带末行 412 保持行窗口原值, 无突变)
+    step = np.abs(np.diff((out - m)[60:340], axis=0)).max(axis=(1, 2))
+    assert step.max() <= 2.5, f"贴回区相邻行 delta 跳变 {step.max():.1f} > 2 灰阶, 条带风险"
+    # 爬坡段(行 404..412, 贴回区外)斜率 ≤2 灰阶/行(跳变点 403→404 由 90
+    # 灰阶摊成 2 灰阶/行; 行 404..412 为暗带平台, 斜率 0; 行 402→403 为
+    # 爬坡段过渡, 斜率 2 灰阶/行, 落在贴回区外无涂抹面)
+    ramp_step = np.abs(np.diff((out - m)[404:413], axis=0)).max(axis=(1, 2))
+    assert ramp_step.max() <= 2.5, f"爬坡段斜率 {ramp_step.max():.1f} > 2 灰阶/行, 条带风险"

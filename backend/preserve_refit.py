@@ -652,7 +652,10 @@ def anchor_ref_local(
     亮中性(笔画/高光白)与 exclude_masks(核心场/鬼场等) 的像素;
     成对样本 <48px 或 |全局 delta|>160(环采样不可信; 袖面高光 vs
     阴影实测 135 合法)时原样返回; 行窗口样本 <32px 或 |delta|>160
-    时该行回退全局 delta。
+    时该行回退全局 delta。行 delta 按 1px 限幅 2 灰阶双向多遍收敛,
+    消除环带边界/样本切换处中位突变(2048 尺度约 1-2 灰阶/px 的爬坡,
+    贴回区横向条带"涂抹感"来源, r13 GPU 视觉驳回定位; 布料渐变斜率
+    实测 <0.1 灰阶/行, 限幅远大于渐变不误伤)。
 
     Returns:
         与 matched_ref 同尺寸同类型的锚定版(gen 侧带 .info 时保留)
@@ -724,6 +727,66 @@ def anchor_ref_local(
                 d_y = np.median(gen[lo:hi][pw], axis=0) - np.median(mat[lo:hi][pw], axis=0)
                 if np.abs(d_y).max() <= 160.0:
                     delta_row[y] = d_y
+            # 带边界跳变平滑: ±24 行窗在环样本稀疏/切换处中位 delta 突变
+            # (r13 GPU 实测: 贴回区行带边界处相邻行 delta 跳 40+ 灰阶,
+            # 贴回区可见横向条带"涂抹感")。行带内 delta 按 1px 限幅 2 灰阶
+            # (布料明暗渐变斜率 r13 实测 <0.1 灰阶/行, 限幅远大于渐变
+            # 不误伤): 行带内 delta 视为若干水平段(中位不突变) + 跳变
+            # 边界, 跳变段(两个平台间的行, 贴回区外无成对样本)填线性爬坡
+            # (每行 ≤2 灰阶), 跳变前后平台行不变 —— 贴回区(平台内)局部
+            # 锚定不变, 爬坡端点处 delta 与平台值连续; 逐元素标量赋值,
+            limit = 2.0
+            y0s, y1s = max(0, int(ring_rows[0]) - band), min(h, int(ring_rows[-1]) + band + 1)
+            dr = delta_row[y0s:y1s].copy()
+            N = dr.shape[0]
+            for _pass in range(8):
+                step_mag = np.abs(np.diff(dr, axis=0)).max(axis=1)
+                bound = np.flatnonzero(step_mag > limit).tolist()
+                if not bound:
+                    break
+                progressed = False
+                for b in bound:
+                    b = int(b)
+                    b2 = b
+                    while b2 + 1 < step_mag.shape[0] and step_mag[b2] > limit:
+                        b2 += 1
+                    left_v = dr[b - 1].copy()
+                    right_v = dr[b2 + 1].copy() if b2 + 1 < N else dr[b2].copy()
+                    jump_mag = float(np.abs(left_v - right_v).max())
+                    if jump_mag <= limit:
+                        continue
+                    # 爬坡段 [lo, hi] 首尾平台值不变, 中间行(lo+1..hi)
+                    # 摊成线性爬坡; 容量 = (行数) * limit, 不足则向两侧
+                    # 扩到行带边缘
+                    lo, hi = b, b2
+                    while lo > 0 and hi < N - 1:
+                        span = hi - lo + 1
+                        left_v = dr[lo - 1].copy()
+                        right_v = dr[hi].copy()
+                        cap = float(span * limit)
+                        jump_mag = float(np.abs(left_v - right_v).max())
+                        if cap >= jump_mag:
+                            break
+                        lo -= 1
+                        hi = min(hi + 1, N - 1)
+                    # 爬坡段 [lo, hi] 首尾平台值不变, 中间行(lo+1..hi)
+                    # 摊成线性爬坡(含 hi-lo 个间隔, 斜率 ≤limit)
+                    left_v = dr[lo].copy()
+                    right_v = dr[hi].copy()
+                    n = hi - lo
+                    if n <= 0:
+                        continue
+                    wts = np.linspace(0.0, 1.0, n + 1)
+                    for i in range(1, n + 1):
+                        w0 = float(1.0 - wts[i])
+                        w1 = float(wts[i])
+                        row_idx = lo + i
+                        for c in range(3):
+                            dr[row_idx, c] = float(left_v[c] * w0 + right_v[c] * w1)
+                    progressed = True
+                if not progressed:
+                    break
+            delta_row[y0s:y1s] = dr
         out = np.clip(mat + delta_row[:, None, :], 0, 255).astype(np.uint8)
         if isinstance(matched_ref, Image.Image):
             im = Image.fromarray(out)
