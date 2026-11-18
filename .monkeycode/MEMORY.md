@@ -24,6 +24,18 @@ This file records user instructions, preferences, and teachings for reference in
   - 跑时 31.8s (r14 POSTFX=1 全链路 64.9s, RAW 直出省一半时间)
   - 冒烟 smoke 因 FASHN 权重缺失仍 rc=1 (与 r14 一致, 冒烟检查的是本地 FASHN 权重路径, 与 POSTFX 无关)
 
+[RAW 交付档升级: CPU 放大 + review 落库]
+- Date: 2026-11-18
+- Context: 用户拍板 r15 RAW 直出可作为交付档位, 但 SKU 像素下限需后续 CPU 放大(GzmDesign 调 /api/tryon 编排)
+- Category: Operations & Deployment
+- Instructions:
+  - VTON_POSTFX=0 从纯调试开关升级为可交付档位(commit e5a4eb8): 跳过 POSTFX 全链路(净负)后,
+    仍做 CPU Lanczos 等比放大到 long_side(SKU 像素下限), 只做放大不缩小(长边已达标保持原样), 不做印花核心直贴
+  - 元数据 postfx=raw + delivery_tier=review(RAW 无印花保真分, 走人工视觉验收); worker 把 postfx 档位落库
+  - 编排链: GzmDesign AiPanel.vue 调 /api/tryon → 编排层幂等(seed_ns+pipeline_ver) → FASHN(raw)
+    → CPU 放大到 long_side → REVIEW 状态回写图层, 运营点"采用"才推 PROD
+  - 注意: 工作区前端是 vanilla-JS SPA(src/main.js), GzmDesign AiPanel.vue 在用户独立前端仓, 本次只落后端编排层
+
 [r14 POSTFX 净负 → RAW 直出开关]
 - Date: 2026-11-18
 - Context: Discovered by Agent while processing user visual feedback that r14_s0_fashn_raw outperformed r14_final_2048
