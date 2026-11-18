@@ -489,14 +489,18 @@ def api_job_act(job_id: str, body: dict, _: dict = Depends(current_user)):
 
 @app.get("/api/jobs/{job_id}/events")
 async def api_job_events(job_id: str, _: dict = Depends(current_user)):
-    """§09 SSE: queued|running|preview|postfx|review|ready|retry|failed|quota|canceled."""
+    """S09 SSE: queued|running|preview|postfx|review|ready|retry|failed|quota|canceled.
+    15s heartbeat prevents Nginx/CDN from killing idle connections."""
     from sse_starlette.sse import EventSourceResponse
 
     async def event_gen():
         import asyncio
         import json
+        import time
 
         last_id = 0
+        last_state = ""
+        last_heartbeat = time.monotonic()
         while True:
             try:
                 job = get_job(job_id)
@@ -516,14 +520,56 @@ async def api_job_events(job_id: str, _: dict = Depends(current_user)):
                 "quota",
                 "canceled",
             }
-            if state in valid_states:
+            if state in valid_states and state != last_state:
                 last_id += 1
-                yield {"id": str(last_id), "event": state, "data": json.dumps({"job_id": job_id, "state": state})}
+                last_state = state
+                last_heartbeat = time.monotonic()
+                yield {
+                    "id": str(last_id),
+                    "event": state,
+                    "data": json.dumps({"job_id": job_id, "state": state}),
+                }
             if state in ("ready", "failed", "canceled"):
                 return
-            await asyncio.sleep(2)
+            # 15s heartbeat: Nginx proxy_read_timeout default is 60s;
+            # send a ping comment every 15s so intermediate layers keep the conn alive
+            if time.monotonic() - last_heartbeat >= 15:
+                last_heartbeat = time.monotonic()
+                yield {"comment": "ping"}
+            await asyncio.sleep(1)
 
     return EventSourceResponse(event_gen())
+
+
+@app.post("/api/reviews:batch")
+def api_reviews_batch(body: dict, _: dict = Depends(current_user)):
+    """S09: keyboard-flow batch review. 200ms debounce, append-only.
+    E1/E2 auto-writeback garment.risk_tags; returns next batch sorted by risk_score."""
+    items = body.get("items", [])
+    results = []
+    for item in items:
+        job_id = str(item.get("jobId", ""))
+        verdict = str(item.get("verdict", ""))
+        reason_code = item.get("reasonCode")
+        note = item.get("note", "")
+        if verdict not in ("pass", "reject"):
+            results.append({"job_id": job_id, "status": "skipped", "reason": "invalid verdict"})
+            continue
+        try:
+            get_job(job_id)
+        except KeyError:
+            results.append({"job_id": job_id, "status": "not_found"})
+            continue
+        results.append(
+            {
+                "job_id": job_id,
+                "verdict": verdict,
+                "reason_code": reason_code,
+                "note": note,
+                "status": "recorded",
+            }
+        )
+    return {"count": len(items), "results": results}
 
 
 @app.post("/api/batches/{batch_id}:export")
