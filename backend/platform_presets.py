@@ -34,13 +34,17 @@ _U2NET_ROOT = _REPO_ROOT / "models" / "seg"
 _POSE_ROOT = _REPO_ROOT / "models" / "mediapipe"
 _RTMPOSE_ROOT = _REPO_ROOT / "models" / "rtmpose"
 
-Platform = Literal["shopify", "amazon", "aliexpress"]
+Platform = Literal["shopify", "amazon", "aliexpress", "tiktok", "independent_site"]
 
 PLATFORM_PRESETS: dict[str, dict] = {
     # size: 输出正方形边长(px);max_bytes: 成品 JPEG 目标体积上限;force_white: 强制纯白底
     "shopify": {"size": 2048, "max_bytes": 5 * 1024 * 1024, "force_white": True},
     "amazon": {"size": 1600, "max_bytes": 20 * 1024 * 1024, "force_white": True},
     "aliexpress": {"size": 1000, "max_bytes": int(4.5 * 1024 * 1024), "force_white": True},
+    # TikTok Shop: 主图 1:1 >= 1000x1000, 视频封面 3:4 / 9:16; 白底可选
+    "tiktok": {"size": 1080, "max_bytes": 5 * 1024 * 1024, "force_white": False},
+    # 独立站: 无硬性平台限制, 默认 2048 白底(与 shopify 同档)
+    "independent_site": {"size": 2048, "max_bytes": 5 * 1024 * 1024, "force_white": True},
 }
 PLATFORM_SET = {"none", *PLATFORM_PRESETS}
 

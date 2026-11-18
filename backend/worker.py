@@ -1,3 +1,4 @@
+import logging
 import os
 import threading
 import time
@@ -7,6 +8,8 @@ from pathlib import Path
 from engine import compose_tryon, engine_status, guess_audience, guess_garment_type
 from store import BASES, RESULTS, UPLOADS, claim_next_job, find_in_dir, patch_job
 from store import settings as load_settings
+
+logger = logging.getLogger("atelier.worker")
 
 
 def _default_workers() -> int:
@@ -202,6 +205,30 @@ def process_job(job: dict, bases: list[dict]) -> None:
             result.convert("RGB").save(out_jpg, "JPEG", quality=94, optimize=True)
             out_path = out_jpg
             ext = "jpg"
+
+    # 电商合规标准件: 按平台规则集检测成品图(白底/水印/促销文字/尺寸/体积),
+    # 输出 compliance_report 落 job; 合规 fail → delivery_tier 强制 review(人工验收)。
+    compliance_fields: dict = {}
+    if platform and platform != "none":
+        try:
+            from compliance import run_compliance_check
+
+            comp_report = run_compliance_check(result, platform, out_path)
+            compliance_fields = comp_report.as_job_fields()
+            if comp_report.overall == "fail":
+                compliance_fields["delivery_tier"] = "review"
+                _compliance_msg = f"Compliance FAIL ({comp_report.summary}); tier→review"
+            elif comp_report.overall == "warning":
+                _compliance_msg = f"Compliance warning ({comp_report.summary})"
+            else:
+                _compliance_msg = f"Compliance pass ({comp_report.summary})"
+            logger.info("%s", _compliance_msg)
+        except Exception:  # noqa: BLE001
+            logger.warning("Compliance check failed; skipping (non-blocking)")
+            compliance_fields = {}
+    if compliance_fields:
+        patch_job(job["id"], compliance_fields)
+
     preview = RESULTS / f"{job['id']}_preview.jpg"
     thumb = result.convert("RGB")
     thumb.thumbnail((640, 860))
