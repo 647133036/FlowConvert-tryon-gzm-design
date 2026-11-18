@@ -27,7 +27,7 @@ from PIL import Image
 
 logger = logging.getLogger("atelier.tryon_provider")
 
-PIPELINE_VERSION = os.environ.get("VTON_PIPELINE_VERSION", "0.2.0")
+PIPELINE_VERSION = os.environ.get("VTON_PIPELINE_VERSION", "0.2.1")
 
 # §06 价格表(分/张, env 可覆盖): fashn_local 为 GPU 摊薄估算值;
 # 百炼 aidge(AiTryOn 系) 按 AIDGE_COST_CENT; VIAPI 独立按次入口。
