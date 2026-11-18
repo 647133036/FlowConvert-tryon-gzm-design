@@ -36,6 +36,20 @@ This file records user instructions, preferences, and teachings for reference in
     → CPU 放大到 long_side → REVIEW 状态回写图层, 运营点"采用"才推 PROD
   - 注意: 工作区前端是 vanilla-JS SPA(src/main.js), GzmDesign AiPanel.vue 在用户独立前端仓, 本次只落后端编排层
 
+[5 条换衣管线 provider 注册表]
+- Date: 2026-11-18
+- Context: 用户要求电商换衣统一 5 管线: FASHN / SDXL / 阿里云百炼 / VIAPI / 第三方预留
+- Category: Operations & Deployment
+- Instructions:
+  - 百炼 + VIAPI 都走同一 aidge 端点(aidge.aliyuncs.com), 换 model 名区分(用户拍板):
+    百炼 aitryon 系 = aitryon / aitryon-plus / aitryon-refiner; VIAPI 默认同 aitryon
+  - VTON_PROVIDER 选 aidge / viapi / third_party 均映射 aidge 端点, VTON_PROVIDER_MODEL 可覆盖 model 名;
+    model 名进幂等键 generation_mode(换模型=换出图, 缓存失效)
+  - aidge payload 透传 Model 字段; 不可用时降级 fashn_local
+  - 5 管线登记在 tryon_provider.PROVIDER_PIPELINE, engine_status 顶层 pipelines 键暴露, 前端可枚举
+  - 第三方 = 预留接入位(§08 生成源无感): 实现一个 Provider 钩子即插即用, 暂未实现真实调用
+  - 价格: aidge=15分(VIAPI_COST_CENT 可调), fashn_local=5分, 缓存命中 0 元
+
 [r14 POSTFX 净负 → RAW 直出开关]
 - Date: 2026-11-18
 - Context: Discovered by Agent while processing user visual feedback that r14_s0_fashn_raw outperformed r14_final_2048
