@@ -124,6 +124,51 @@ def test_compose_tryon_fashn_calls_segmentation_free(monkeypatch, tmp_path):
     assert out.info["engine"] == "fashn-vton"
     assert out.info["fashn_category"] == "one-pieces"
     assert max(out.size) == 64
+    assert out.info["postfx"] == "full"
+
+
+def test_compose_tryon_fashn_postfx_raw_bypass(monkeypatch, tmp_path):
+    """VTON_POSTFX=0: 跳过 protect/refit/anchor/ghost/inpaint/reapply 全
+    POSTFX 链路, 直接交付 FASHN 原生 32x32(不 resize 到 64), 元数据
+    postfx=raw, lock_identity=False(无 keep_mask)。r14 GPU 视觉验收:
+    s0_fashn_raw 比 final_2048 好, POSTFX 净负, 须支持 RAW 直出。
+    """
+    import engine_fashn
+    import engine_sdxl
+    import platform_presets
+    import prewhiten as prewhiten_mod
+    from PIL import Image as PILImage
+
+    class FakePipeline:
+        def __init__(self, weights_dir):
+            pass
+
+        def __call__(self, **kwargs):
+            return types.SimpleNamespace(images=[PILImage.new("RGB", (32, 32), (9, 9, 9))])
+
+    fake_mod = types.ModuleType("fashn_vton")
+    fake_mod.TryOnPipeline = FakePipeline
+    monkeypatch.setitem(sys.modules, "fashn_vton", fake_mod)
+    monkeypatch.setattr(engine_fashn, "FASHN_DIR", tmp_path)
+    monkeypatch.setattr(engine_fashn, "_fashn_state", {"pipe": None})
+    monkeypatch.setenv("VTON_POSTFX", "0")
+    monkeypatch.setenv("VTON_PATTERN_LOCK", "1")
+    monkeypatch.setenv("VTON_WARP", "1")
+    monkeypatch.setattr(engine_sdxl, "foreground_mask", lambda img: None)
+    monkeypatch.setattr(platform_presets, "force_white_background", lambda img, subject_mask=None: img)
+    monkeypatch.setattr(prewhiten_mod, "prewhiten_input", lambda img: (img, {"status": "already_white"}))
+
+    person = tmp_path / "p.png"
+    garment = tmp_path / "g.png"
+    PILImage.new("RGB", (32, 32), (10, 20, 30)).save(person)
+    PILImage.new("RGB", (32, 32), (200, 10, 10)).save(garment)
+
+    out = engine_fashn.compose_tryon_fashn(person, garment, "women", "dress", 64, "white", "western_europe")
+    # RAW 直出: 不 resize 到 64, 保持 FASHN 原生 32x32
+    assert max(out.size) == 32, f"POSTFX=0 须直出 FASHN 原生尺寸, 实测 {out.size}"
+    assert out.info["postfx"] == "raw"
+    assert out.info["detail_applied"] is False
+    assert out.info["lock_identity"] is False
 
 
 def test_compose_tryon_fashn_fidelity_survives_bg_and_resize(monkeypatch, tmp_path):

@@ -250,13 +250,19 @@ def compose_tryon_fashn(
     warp_enabled = os.environ.get("VTON_WARP", "1") != "0"
     pattern_on = os.environ.get("VTON_PATTERN_LOCK", "1") != "0"
     lock_on = os.environ.get("VTON_LOCK_ID", "1") != "0"
+    # POSTFX 全链路开关: 0=跳过 protect/refit/anchor/ghost/inpaint/reapply 全
+    # 后处理, 直接交付 FASHN 原始生成(r14 GPU 视觉验收: s0_fashn_raw 比
+    # final_2048 好——露肩结构变异/印花放大扭曲/边缘拖影全出自 POSTFX 净负)。
+    # 默认 1(启用全链路), 0 时 result 保持 FASHN 原样, 跳过 resize 到
+    # long_side(FASHN 原生 768 直出), 元数据记 postfx=raw。
+    postfx_on = os.environ.get("VTON_POSTFX", "1") != "0"
     detail_applied = False
     keep_mask = None
     paste_mask = None
     cloth_ref = None
     cloth_ref_alpha = None
     pending_print_warp = None
-    if (pattern_on or lock_on) and warp_enabled:
+    if postfx_on and (pattern_on or lock_on) and warp_enabled:
         try:
             subj = foreground_mask(result)
             shared = clothing_mask(
@@ -338,7 +344,8 @@ def compose_tryon_fashn(
 
     # 保护贴回: keep_mask 外(人脸/发丝/手/露肤手臂/背景)贴回源图像素,
     # keep_mask 内保留 FASHN 像素 + 贴印。手臂不会变白、胸口不会变白、发丝不会糊。
-    if lock_on and keep_mask is not None:
+    # POSTFX=0 时跳过(直接交付 FASHN 原样)。
+    if postfx_on and lock_on and keep_mask is not None:
         try:
             _feather = int(os.environ.get("VTON_PROTECT_FEATHER", "4"))
             result = protect_inverse_refit(result, base_img, keep_mask, feather_px=_feather)
@@ -361,29 +368,37 @@ def compose_tryon_fashn(
         except Exception:
             logger.exception("FASHN print fidelity scoring failed; tier not set")
 
-    if background == "transparent":
-        result = _remove_background(result)
-    elif background == "white":
-        if result.mode == "RGBA":
-            bg = Image.new("RGB", result.size, (255, 255, 255))
-            bg.paste(result, mask=result.split()[-1])
-            result = bg
-        else:
-            result = result.convert("RGB")
-        subj_mask = foreground_mask(result)
-        result = force_white_background(result, subject_mask=subj_mask)
+    # POSTFX=0 时跳过 resize + 印花核心直贴全链路, 直接交付 FASHN 原生
+    # 尺寸(768x576), 元数据记 postfx=raw, 供 REVIEW 视觉验收 RAW 直出
+    # 与 POSTFX 全链路的质量对比(定位净负层)。
+    if postfx_on:
+        if background == "transparent":
+            result = _remove_background(result)
+        elif background == "white":
+            if result.mode == "RGBA":
+                bg = Image.new("RGB", result.size, (255, 255, 255))
+                bg.paste(result, mask=result.split()[-1])
+                result = bg
+            else:
+                result = result.convert("RGB")
+            subj_mask = foreground_mask(result)
+            result = force_white_background(result, subject_mask=subj_mask)
 
-    rw, rh = result.size
-    scale = long_side / max(rw, rh)
-    if abs(scale - 1) > 0.01:
-        result = result.resize((int(rw * scale), int(rh * scale)), Image.Resampling.LANCZOS)
+        rw, rh = result.size
+        scale = long_side / max(rw, rh)
+        if abs(scale - 1) > 0.01:
+            result = result.resize((int(rw * scale), int(rh * scale)), Image.Resampling.LANCZOS)
+    else:
+        pass  # 元数据 postfx=raw 在尾部统一写入
 
     # 印花核心直贴(最终分辨率): 放大后的成图上重投 + 核心检测 + 贴印,
     # 印花笔触保参考原样清晰度(hf/folds 关, 不受生成纹理污染); 保真分
     # 同步在成图分辨率上度量。核心检测只在最终分辨率做一次(576 下印花
     # 笔触被 8x 降采样混进底色只剩空心环); 实心款(无核心)回退整件贴回
     # 同样在全分辨率, 质量较 r8 低分辨率贴印只升不降。模板路径不变。
-    if pending_print_warp is not None:
+    # POSTFX=0 时 skip 印花核心直贴全链路(pending_print_warp 保持 None 不
+    # 赋值, 本块自然跳过); 元数据记 postfx=raw 供 REVIEW 视觉验收。
+    if postfx_on and pending_print_warp is not None:
         try:
             from preserve_refit import clip_mask_to_garment_alpha as _clip_fn
             from preserve_refit import print_core_mask as _core_fn
@@ -567,6 +582,7 @@ def compose_tryon_fashn(
     result.info["degraded_reason"] = degraded_reason
     result.info["detail_applied"] = detail_applied
     result.info["lock_identity"] = lock_on and keep_mask is not None
+    result.info["postfx"] = "raw" if not postfx_on else "full"
     result.info["fashn_category"] = category
     result.info["prewhiten"] = {"base": pw_base, "garment": pw_garment}
     if _pf_val is not None:

@@ -2,7 +2,29 @@
 
 This file records user instructions, preferences, and teachings for reference in future interactions.
 
-## Format
+[r14 delta_row 爬坡平滑验证通过]
+- Date: 2026-11-18
+- Context: Discovered by Agent while running r14 GPU round after patching anchor_ref_local
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - r14 GPU 验证: anchor1_out 贴回区(行 664..973) delta 逐行最大步长 2.0 @ row 806, r13 同位置 max_step=71.0 @ row 693, 跳变基本消除
+  - anchor1_out delta 范围 111..148 (r13 为 58..151), 贴回区局部锚定保持
+  - shoulder1_info.json changed_px_abs=0 (与 r13 一致, 肩部贴合是生成层缺陷, POSTFX 无法修)
+  - core band step max 指标(行带 648..1305 全量) = 176, 但这是 final 全图相邻行差, 含 REAPPLY 等后处理层, 非 anchor_ref_local 单函数输出; 贴回区内 delta 跳变须看 anchor1_out - tone1_matched_ref
+  - s0_fashn_raw 是 768x576, final_2048 是 2048x1536, 对比前须 resize gen 到 final 尺寸
+  - r14 图已输出到 /workspace/r14_review/ 供用户视觉验收
+
+[r14 POSTFX 净负 → RAW 直出开关]
+- Date: 2026-11-18
+- Context: Discovered by Agent while processing user visual feedback that r14_s0_fashn_raw outperformed r14_final_2048
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - 用户视觉验收: r14_s0_fashn_raw.png 优于 r14_final_2048.png——RAW 衣服穿上去/图案正常/小色差/边缘拖影; FINAL 露肩结构变异/印花放大扭曲/袖口下摆光影断裂/透明叠加感
+  - POSTFX 全链路(protect+refit+anchor+ghost+inpaint+reapply+blend)对此 SKU 净负, 把 RAW 的好效果搞砸
+  - 新增 VTON_POSTFX=0 开关(engine_fashn.py L253-265): 跳过全 POSTFX, 直接交付 FASHN 原生 768x576(不 resize 到 2048), 元数据 postfx=raw
+  - VTON_POSTFX 默认 1(启用全链路), 0 时 result 保持 FASHN 原样, 跳过 resize/背景/postfx, 元数据 lock_identity=False
+  - r15 GPU 轮须同时跑 VTON_POSTFX=1(全链路) + VTON_POSTFX=0(RAW 直出) 两套, 对比用户视觉验收
+  - 肩部贴合缺陷(shoulder1 changed_px_abs=0)是生成层问题, POSTFX 无法修; 露肩结构变异是 REAPPLY/锚定层把 FASHN 几何搞歪
 
 ### User Instruction Entry
 User instruction entries should follow this format:
