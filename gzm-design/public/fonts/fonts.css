@@ -1,0 +1,6 @@
+/* Bug fix 3: CJK font guard — @font-face for common CJK fonts */
+@font-face {
+  font-family: 'CJK';
+  src: local('PingFang SC'), local('Microsoft YaHei'), local('Noto Sans CJK SC');
+  font-display: swap;
+}

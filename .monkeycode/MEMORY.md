@@ -410,3 +410,15 @@ Entries discovered by the Agent during task execution should follow this format:
   - 推送适配器骨架: Amazon SP-API / AliExpress / TikTok Shop 仅凭据校验+占位返回, 需 API Key 联调;
     独立站 Webhook 已实现(multipart 上传, SSRF 防护同 Shopify)
   - 客户画像: 精品/品牌卖家算"上架时间+退货率+合规风险", 工贸一体批量大流程固定
+
+[GzmDesign 二开集成: 海报排版台 + 纯 CPU 渲染]
+- Date: 2026-11-18
+- Context: 用户要求把 GzmDesign (Vue3+LeaferJS) 集成到工作区, 做图案替换+海报排版, 纯 CPU 不烧 GPU
+- Category: Environment Configuration
+- Instructions:
+  - gzm-design/ 子项目: 独立 Vite SPA (端口 5174), 代理 /api → localhost:8000
+  - 修 4 个 GzmDesign 已知 bug: ①复制粘贴 useCopyPaste clipboard target ②图层显隐 visible/Leafer.visible 双写 ③CJK 字体 fontGuard() ④撤销栈 record() 记录 AI 编辑
+  - backend/poster.py: Pillow 纯 CPU 渲染海报 (2x PNG), 支持 text/price/logo/qr/rect 5 类图层
+  - /api/poster/render 端点: POST 模板 JSON → 返回 png_b64 + meta (layer_count/visible_layers/types)
+  - 海报排版走 CPU, 试衣/换图案/换背景走 GPU (/api/jobs), 两者在 GzmDesign AiPanel 里统一入口
+  - gzm-design 测试未纳入主仓 vitest (独立 package.json), 主仓回归门仍 496+14 passed

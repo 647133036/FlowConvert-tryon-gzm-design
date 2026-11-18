@@ -951,3 +951,20 @@ def download(job_id: str, _: dict = Depends(current_user)):
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Result file missing")
     return FileResponse(path, filename=f"{job.get('title') or job_id}{path.suffix}")
+
+
+@app.post("/api/poster/render")
+def api_poster_render(body: dict, _: dict = Depends(current_user)):
+    import base64
+
+    from backend.poster import poster_meta, render_poster_from_json
+
+    meta = poster_meta(body)
+    png_bytes = render_poster_from_json(body)
+    return {
+        "meta": meta,
+        "size_bytes": len(png_bytes),
+        "format": "png",
+        "scale": 2,
+        "png_b64": base64.b64encode(png_bytes).decode(),
+    }

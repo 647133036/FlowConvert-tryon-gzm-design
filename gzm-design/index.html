@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>GzmDesign · 海报排版台</title>
+  <link rel="stylesheet" href="/fonts/fonts.css" />
+</head>
+<body>
+  <div id="app">
+    <aside class="panel">
+      <h1>海报排版台</h1>
+      <p class="hint">拖拽图层 · 右键 AI 动作 · Ctrl+Z 撤销</p>
+      <button id="add-text">+ 文字</button>
+      <button id="add-price">+ 价格</button>
+      <button id="add-logo">+ Logo</button>
+      <button id="add-qr">+ 二维码</button>
+      <button id="add-bg">+ 背景板</button>
+      <button id="render" class="primary">渲染海报 → /api/jobs</button>
+      <div id="ai-panel" class="ai-panel hidden">
+        <h3>AI 动作</h3>
+        <button data-ai="swap-pattern">换图案</button>
+        <button data-ai="swap-bg">换背景</button>
+        <button data-ai="upscale">超清 2x</button>
+        <button data-ai="tryon">AI 试衣</button>
+        <p class="ai-hint" id="ai-hint"></p>
+      </div>
+    </aside>
+    <main class="canvas-wrap">
+      <div id="canvas" class="canvas"></div>
+    </main>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
