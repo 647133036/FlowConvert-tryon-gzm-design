@@ -1,250 +1,96 @@
-# Atelier v0.1.8
+# Atelier v0.1.9
 
 店铺后台固定底图换衣工作台。选一张模特底图，批量拖入服装平铺图，队列生成正面成品，下载或推送到商品页。界面内置中英文一键切换。
 
-**基本运行条件：8 核 CPU / 32GB 内存 / NVIDIA A10（24GB 显存）。** SDXL 商用管线（ControlNet + IP-Adapter + LoRA）按此规格验证；无 GPU 时自动降级合成引擎，效果有限。
+**基本运行条件：8 核 CPU / 32GB 内存 / NVIDIA A10（24GB 显存）。** 商用管线（FASHN VTON v1.5 像素空间换装 + 确定性印花保真贴回）按此规格验证；无 GPU 时自动降级合成引擎，效果有限。
 
-## v0.1.8 更新日志
+## v0.1.9 更新日志：印花保真管线（FASHN 商用路径）
 
-### RTMPose 关键点检测：替代 MediaPipe，精度提升 + 侧背面退化更小
+### 问题定义
 
-v0.1.7 用 MediaPipe Pose 检测髋部关键点辅助腰线估算。实测 hip_y_ratio=0.681，比轮廓法回退值 0.62 高出 6 个百分点，且 MediaPipe 在侧面/背面姿态下精度退化严重（AP 下降 13.7%）。
+生成式换衣有一个天然矛盾：AI 负责把衣服"穿"上模特（褶皱、光影、垂坠感），但 SKU 平铺图上的 logo / 印花 / 文字一旦交给生成模型重画，字形必然漂移——电商场景里印花就是商品本身，错一笔就是详情页事故。
 
-v0.1.8 切换为 RTMPose-m（COCO AP 75.8%，CPU 90+ FPS，侧/背面退化仅 2.2%）：
+v0.1.9 的解法：**AI 只画衣服，图案确定性贴回。** FASHN VTON v1.5（Apache 2.0，像素空间，`segmentation_free=True`）生成整体上身效果后，印花区域从 SKU 参考图经几何 refit + 色调锚定后像素级贴回，`print_fidelity` 实测保持 1.0000。
 
-- **模型**：RTMPose-m（CSPNeXt backbone + RTMCCHead，SimCC 输出，输入 256x192）
-- **推理**：从灰度阈值提取 bbox → expand 1.25 → resize → ImageNet normalize → backbone → head → SimCC argmax 解码
-- **依赖绕过**：fake `xtcocotools`/`mmdet`/`mmcv.ops` 注入 `sys.modules`，绕过 mmpose import 链中对编译扩展和数据集/评估模块的依赖。推理只需要 backbone + head，不需要这些模块。`RTMPOSE_FAKE_DEPS=1`（默认）开启，设 `0` 关闭（真实 mmcv/mmdet 已装时）
-- **PyTorch 2.6 兼容**：`torch.load(weights_only=False)` 加载含 numpy 数组的 checkpoint
-- **MediaPipe 回退**：RTMPose 初始化或推理失败时自动降级到 MediaPipe Pose
-- **SimCC 解码**：`_simcc_decode` 独立纯函数，crop 正方形 bbox 直接 resize，x/y 独立缩放，无 letterbox padding；归一化分母为原图宽高
-
-### 腰线插值修正：COCO hip landmark 不等于服装腰线
-
-切换到 RTMPose 后发现更深层的概念问题：COCO 标注的 "hip" landmark 在大转子（股骨）位置，比服装腰线低 10-15 个百分点。直接用 hip_y 作为 waist_r 会导致上衣下摆过长、裤腰位置偏低。
-
-v0.1.8 改用 shoulder → hip 插值：
+### 贴回管线（engine_fashn.py + preserve_refit.py）
 
 ```
-waist_y = shoulder_y + (hip_y - shoulder_y) * 0.55
+FASHN 生成
+  └─ refit_cloth_to_drawn_garment   平铺图案 warp 缩放对齐到生成衣服区
+       （VTON_REFIT_ENGINE = grid / tps / optical_flow）
+  └─ match_ref_tone                 全局色调匹配（采样避开鬼影/印花笔画）
+  └─ ghost_print_mask               鬼影检测（笔画语义，非凸包——
+                                    袖区 30k px 布料不再被误贴平）
+  └─ ghost_inpaint_pass             局部修补优先 + Telea 色锚：
+                                    Telea 填充实测会白化（填充 240,234,219
+                                    vs 净布料 203,181,116），逐像素向最近
+                                    净布料平移局部色偏
+  └─ ghost_strict_residual          territory 限定残余检测 + 逐像素最近
+                                    净布料色复核（无 stroke_mask 时检测区
+                                    排除自身，防自证）
+  └─ anchor_ref_local               残余兜底 + 核心场贴回的局部环形锚定：
+                                    全局色调按整件布料中位（含深色下摆 57-96）
+                                    匹配，贴回区落在亮胸口（185-195）时会拍出
+                                    深色矩形（"像贴上去的/整体下移/衣领断层"）；
+                                    改为逐行 ±24 行窗口环布料中位，行分段
+                                    加性平移，两个方向（亮贴暗/暗贴亮）收敛
+  └─ blend_core_ref_tone            核心场混合：笔触取自原始参考（保真），
+                                    布料底取锚定版，亮度 smoothstep 软边 +
+                                    1px 羽化（笔触 AA 环亮度 109→181，ref 218）
+  └─ quality_gate.print_fidelity_score  印花保真分（贴回区灰度 NCC 映射）
 ```
 
-腰线定位在肩部和髋部之间偏上 55% 处，对应人体自然腰线（肚脐水平）。
+最近净布料色（`_nearest_fabric_color`）为纯 numpy 两阶段 Voronoi 传播：先 5x1 横向核（布料明暗沿行渐变，实测右袖 B 通道 159@y620→125@y920；多行核的 max 膨胀会把上方更亮布料逐行复合进来），再 3x3 等方核收尾竖洞。
 
-| 方法 | hip_y_ratio（直接） | waist_r（插值后） |
-|------|---------------------|-------------------|
-| 轮廓法回退 | — | 0.62 |
-| MediaPipe | 0.681 | — |
-| RTMPose | 0.725 | **0.544** |
+### GPU 实测（RTX 4090 D，r12/r13 轮）
 
-插值后的 0.544 处于人体腰线的正确范围（0.50-0.58），三条路径（pose/轮廓/默认）的输出一致区间收窄。
+| 指标 | 旧管线 | 新管线 | 参考 |
+|------|--------|--------|------|
+| 袖口残留带亮度 | 224（残留白笔画）/ 84（贴平） | 182 | gen 袖料底 183 |
+| 猴头区误伤 | 180→123（暗化） | 180→157 | 无改动 192 |
+| 核心场布料底 | 107（深色矩形） | 178 | gen 胸口 185-195 |
+| 袖褶高频相关 | 0.058 | 0.967 | 1.0 |
+| 笔触 AA 环 | 109（暗圈） | 181 | ref 218 |
+| print_fidelity | — | 1.0000 | 1.0 |
+| 场外严格残影 | 24486 px（gen 本身） | 256 px | →0 |
 
-### Dress mask 修复：脖子覆盖 + 腿部裁切
+肩部掩膜补全（`shoulder_complete_mask`）经 GPU 验证为正确 no-op（当前 SKU 无啃肩行），RTMPose 在 GPU 环境正常（肩点 conf 1.0）。
 
-v0.1.7 的 dress/onesie 遮罩有两个问题：
+### 跨机环境实测（沙箱 vs GPU 服务器）
 
-1. **脖子残留**：face 排除只覆盖顶部 18%，脖子区（18-22%）残留在 mask 中，导致脖子被贴上服装纹理
-2. **腿部未覆盖**：dress normal 下摆在 `waist_r + 0.20`（约 0.82），只到大腿中段，膝盖以下露出原图
+- 沙箱 cv2 5.0.0 非真 OpenCV：`DIST_LABEL_PIXEL` 标签恒 0；`resize` 压掉单通道维。GPU 服务器 cv2 4.8.0 为真实现。跨机语义一致的图像原语一律纯 numpy 实现。
+- 沙箱 numpy 2.4.6 广播不前导补维（仅右对齐）：`(h,1)` 源对 `(h,w,3)` 会行列转置；服务器 numpy 1.23.5 的 `np.linalg.solve` 在良态 TPS 矩阵上返回垃圾（`tps_warp` 已带残差守卫 + lstsq 换道重试，r6-r8 fidelity 卡 0.85 平台的根因）。
 
-v0.1.8 修复：
+### 质检与多 seed
 
-- **脖子排除**：dress/onesie 类型在 face 排除后额外清零顶部 22%（face 18% + neck 4%）。upper/lower 领口在衣物范围内，不排除
-- **腿部覆盖**：dress normal 下摆从 `waist_r + 0.20` 改为 `waist_r + 0.28`（约 0.90，膝部）；long 从 `+0.34` 改为 `+0.35`。onesie normal 同步改为 `+0.28`
-- **knee 关键点精确截断**：有 knee 关键点时，dress/onesie 下摆截到 `knee_r - 0.02`（normal）或 `knee_r + 0.05`（long），无关键点回退固定 offset
+- `delivery_tier`：SSIM（0.70）/ OCR（0.80）/ print_fidelity 分 `auto` / `review` 档
+- `VTON_MULTI_SEED`（默认 3）：worker 按 quality_gate 择优，print_fidelity 跨 seed 可比
+- 三引擎（FASHN / SDXL / 合成）统一写 `result.info.print_fidelity + delivery_tier`
 
-### 残余风险
+## 换衣管线全流程
 
-RTMPose 依赖 fake 模块注入绕过 mmpose import 链（`RTMPOSE_FAKE_DEPS=1`）。mmpose 升级可能新增 import 路径导致 fake 失效，此时静默回退 MediaPipe。安装完整 mmcv 后设 `RTMPOSE_FAKE_DEPS=0`。SimCC `split_ratio=2.0` 硬编码，换模型需同步。门控量纲统一为 subject span（与 waist_r / knee_r 同一坐标系）：hip_r > sho_r + 0.05、knee_r > hip_r、插值落在 `[0.45, 0.65]`，短路执行。checkpoint 存在但加载失败时不混用 MediaPipe。批量跑时每 50 张打印 `waist sources: RTMPose N / MediaPipe K / contour M / default D`。
+按电商换衣的五个阶段组织（商用模式）：
 
-## v0.1.7 更新日志（历史）
-
-### warp 垂直锚点对齐：修正 logo/花纹垂直偏位
-
-v0.1.6 的 `_warp_garment` 仅做水平网格变形（沿躯干轮廓收窄/展宽），垂直方向是恒等映射。`fit_garment_to_body` 按肩宽等比缩放后，衣料的领口和下摆位置由初始放置决定，与人体颈部/腰部没有对齐——这是 pattern_lock 残余风险的主要来源：logo 偏高或偏低，花纹和褶皱不重合。
-
-v0.1.7 在 `_warp_garment` 中加入垂直锚点对齐：
-
-1. 从 alpha 通道检测衣料内容范围（领口行 → 下摆行）
-2. 计算躯干框的垂直目标（颈部 `box["y"]` → 腰部 `box["y"]+box["h"]`）
-3. 用 `np.interp` 构建非线性 `map_y`，将领口映射到颈部、下摆映射到腰部
-4. 与水平 `map_x` 合成到同一次 `cv2.remap`，纯 CPU，无额外开销
-
-```
-VTON_WARP_VERTICAL=1.0  # 默认：全强度垂直对齐
-VTON_WARP_VERTICAL=0.0  # 关闭：仅水平变形（v0.1.6 行为）
-VTON_WARP_VERTICAL=0.5  # 半强度：在恒等和全对齐之间插值
-```
-
-### GARMENT_BOX 适配：dress/lower/onesie 垂直范围修正
-
-`align_garment_to_pose` 此前未应用 `GARMENT_BOX` 调整，连衣裙/裤子/连体衣的垂直 warp 目标与上衣相同（颈部→腰部），导致 dress 被压缩到躯干、lower 被贴到胸口。v0.1.7 在 warp 前按品类调整 `box["y"]` 和 `box["h"]`：
-
-- `upper`（y=0, h=1.0）：颈部→腰部（无变化）
-- `dress`（y=0, h=1.55）：颈部→膝部
-- `lower`（y=0.92, h=0.95）：髋部→大腿
-- `onesie`（y=0, h=1.35）：颈部→大腿
-
-### _detect_skin 形态学去噪
-
-YCbCr 肤色检测加入 5x5 椭圆核开运算（去散点）+ 闭运算（填小孔），避免散点噪声影响 `_correct_skin_tone` 的肤色均值统计和 `reapply_garment_detail` 的肤色排除。
-
-### _correct_skin_tone 脸区排除
-
-此前 `_correct_skin_tone` 对 result 中所有肤色像素做全局平移（`shift = orig_mean - res_mean`），包括 SDXL 通常生成正确的脸部。全局平移会让脸色不自然偏移。
-
-v0.1.7 用前景 bbox 顶部 18% 估算脸区，从统计和应用两端排除：shift 只基于手臂/颈部肤色计算，校正只作用于手臂/颈部，脸部不动。
-
-### _sdxl_inpaint_repair 可用化
-
-v0.1.6 的 `_sdxl_inpaint_repair` 有三个问题：遮罩是整张 shared_mask（inpaint 重画整个衣服区）、每次调用 from_pretrained + del pipe（OOM 风险高）、无原图对比（无法定位肤色异常区）。
-
-v0.1.7 修复：聚焦遮罩（接缝带 + 肤色异常区）、管线单例（`_INPAINT_PIPE` + `_INPAINT_LOCK`）、original 参数传入。启用条件：`VTON_INPAINT_REPAIR=1` + `models/sdxl/sdxl_inpaint/model_index.json`。
-
-### 腰线启发式检测
-
-`clothing_mask` 此前用固定比例裁切衣料 mask 底部，v0.1.7 加入 `_estimate_waist_ratio`：从 subject_mask 行宽分布检测躯干区最窄点作为腰线。v0.1.8 进一步加入 RTMPose 关键点插值（见上方 v0.1.8 更新日志）。
-
-| 品类 | 条件 | 原比例 | 新公式 |
-|------|------|--------|--------|
-| upper | short | 0.62 | waist_r |
-| upper | long sleeve | 0.72 | waist_r + 0.10 |
-| upper | sleeveless | 0.55 | waist_r - 0.07 |
-| upper | long hem | 0.80 | waist_r + 0.18 |
-| dress | normal | 0.82 | waist_r + 0.28 |
-| dress | long | 0.96 | waist_r + 0.35 |
-| lower | top cut | 0.48 | waist_r - 0.14 |
-| onesie | normal | 0.82 | waist_r + 0.28 |
-| onesie | long sleeve | 0.95 | waist_r + 0.33 |
-
-## v0.1.6 更新日志（历史）
-
-### 核心突破：频率分离——让立体感和图案保真同时成立
-
-虚拟换衣同时要两样东西：衣服穿在身上的褶皱光影要自然（立体感），logo/印花/条纹要和原衣一模一样（图案保真）。SDXL 在 mask 区重画衣服时，褶皱和图案被同一个生成过程绑定——光影对了图案就漂一笔，图案锁死了光影就变成贴纸。
-
-PLTON（arXiv:2401.11239）提出了频率分离的解法：把服装特征拆成低频和高频，在去噪过程中分别处理。本管线借鉴 PLTON 论文的频率分离思想，将其集成到 SDXL 管线的 CPU 后处理层：
-
-- 把 warp 后的 `cloth_ref` 拆成低频 LF（底色、大块明暗）和高频 HF（花纹、logo、条纹边缘）
-- 生成图的褶皱光影只调低频（底色全强度响应），高频基本不动（花纹半强度响应）
-- 效果：阴影能压暗底色，但 logo 对比度只被半强度调制，不会随底色一起塌掉
-
-```
-lighting  = clamp(L_gen / L_ref, LIGHTING_MIN, LIGHTING_MAX)
-shade_lf  = 1 + (lighting - 1) * light_strength * lf_strength
-shade_hf  = 1 + (lighting - 1) * light_strength * hf_strength
-lit       = LF_ref * shade_lf + HF_ref * shade_hf
-```
-
-### 10 个环境变量全接入
-
-| # | 变量 | 默认 | 作用点 | 说明 |
-|---|------|------|--------|------|
-| 1 | `LF_BLUR_SIGMA` | 8.0 | 频率分离 | 高斯 sigma，拆 LF/HF |
-| 2 | `LIGHTING_MIN` | 0.75 | lighting clamp | 亮度比下限 |
-| 3 | `LIGHTING_MAX` | 1.25 | lighting clamp | 亮度比上限 |
-| 4 | `LIGHT_STRENGTH` | 1.0 | shade_lf/shade_hf | 光照总闸，0=纯贴图回退 |
-| 5 | `LF_STRENGTH` | 1.0 | shade_lf | 底色光照响应 |
-| 6 | `HF_STRENGTH` | 0.5 | shade_hf | 花纹光照响应 |
-| 7 | `SKIN_WEIGHT` | 0.85 | alpha | 肤色区覆盖降权 |
-| 8 | `FEATHER_PX` | 5 | alpha | mask 边缘羽化半径 |
-| 9 | `SKIP_WHITE_BG` | 1 | valid | 白底跳过开关 |
-| 10 | `WHITE_THRESH` | 245 | valid | 白底判定阈值 |
-
-（均带 `VTON_PATTERN_LOCK_` 前缀）
-
-## v0.1.5 更新日志（历史）
-
-本轮把换衣后遗症当图像修复问题处理：胸口白块、手臂变白、上衣沿裤腰齐边剪、图案被 SDXL 重画。CPU 层立刻生效；SDXL Inpainting 二次修复按需开启。
-
-| 缺陷 | 根因 | 改动 |
-|------|------|------|
-| 胸口白块 | force_white_background 未传主体 mask；cv2 5.0 人脸检测全零 | 主体 mask 算一次传给 clothing_mask 和 force_white_background；heuristic 脸区兜底；_seam_repair Telea inpaint |
-| 手臂变白 | 短袖 mask 含上臂，reapply 贴衣料到皮肤 | 短袖/无袖从主体外侧 25% 减去 YCbCr 肤色；reapply 肤色区降 85%；_correct_skin_tone 拉回原图 |
-| 上衣齐裤腰 | mask 按主体高度 62% 横切 | 按 hem 判定：长款 80% 垂过裤腰 |
-| 图案被改 | SDXL 在 mask=255 区重画 | pattern_lock：warp 后 cloth_ref 覆盖衣服区，频率分离调光 |
-
-## v0.1.4 更新日志（历史）
-
-Canny 按品类 0.55/0.45，IP-Adapter 0.9，texture_strength 0.70；`detect_garment_extent` + 按 hem/sleeve 裁 mask；`blend_tryon` 连通分量 SeamlessClone；`face_margin` 非对称扩展修复胸口深 V；`reapply_garment_detail` 边缘衰减修复肩膀重影。
-
-## v0.1.3 更新日志（历史）
-
-引入「AI 出骨架光影，代码保商品细节」混合生成策略：`align_garment_to_pose` 几何对齐 + `reapply_garment_detail` 纹理颜色回贴 + `blend_tryon` 身份锁。修复 LoRA 权重加载（PEFT 优先）、训练几何（time_ids / letterbox / VAE fp32 / min-SNR）、推理默认值。
+| 阶段 | 实现 |
+|------|------|
+| 1. 衣服抠底 | `garment_alpha` / `detect_garment_extent`：SKU 平铺图出衣服区域、袖长/衣长、品类推断 |
+| 2. 模特抠底 | 生成结果上出 `keep_mask`（模特身上衣服区）+ RTMPose 肩点 + `shoulder_complete_mask`；反选区保护原模特像素 |
+| 3. 衣服重绘在模特上 | FASHN VTON v1.5 生成整体上身效果（唯一的 AI 重绘步骤；SDXL Inpaint / 合成引擎兜底） |
+| 4. 图案缩放贴合 | **确定性贴回，不交给生成模型**：refit warp 缩放 → 色调匹配/局部环形锚定 → 鬼影擦除 → 核心场贴印（花纹/文字/纽扣/袖口/领口原样贴回）→ AA 羽化 |
+| 5. 电商规格 | 质检分档 + 多 seed 择优 + 2048px 白底输出；平台规格化处理（裁切模板/压缩规范）在路线图上 |
 
 ## 功能
 
 - 女装 / 男装 / 女童 / 男童 / 婴幼儿正面底座，可随时替换或上传自家模特
-- 批量拖入几十到上百张服装图，只出正面，长边 2048px
-- 白底 JPEG 或透明 PNG
+- 批量拖入几十到上百张服装图，只出正面，长边 2048px，白底 JPEG 或透明 PNG
+- 印花保真：logo / 文字 / 图案像素级贴回，`print_fidelity` 实测 1.0
 - 已上传图片形成可复用图片库，支持服饰分类管理与批量调整分类
-- 底座分类（受众 / 年龄带 / 人种）可管理、可批量调整
-- 人种标签可自定义（默认 10 个地理区域），换衣引擎按底座人种修正体型（肩宽、躯干比例）
+- 底座分类（受众 / 年龄带 / 人种）可管理、可批量调整；人种标签可自定义（默认 10 个地理区域），换衣引擎按底座人种修正体型
 - 多店铺管理：每店铺独立 embed 嵌入链接 + CSV/SKU 批量推送
 - 真实推送：Shopify Admin API 上传商品图，WordPress REST 媒体 + WooCommerce 商品关联
 - 成品大图预览弹窗，左右对照原图与成品
 - 界面中英文一键切换，语言偏好本地持久化
 - 三层引擎体系：FASHN VTON v1.5（商用主引擎）/ SDXL Inpaint（兜底）/ 合成引擎（无 GPU 兜底）；研究模式仍可用 IDM-VTON（需授权）
-
-## 安全
-
-本项目经过两轮安全审查。当前状态如下：
-
-### 已修复
-
-- 文件服务鉴权：`/files/{path}` 仅暴露 `uploads`/`results`/`bases` 白名单目录，仅允许图片后缀
-- 上传路径校验：文件名和分类名通过正则白名单校验，拒绝路径穿越
-- 图片内容验证：PIL 解码校验，仅接受 PNG/JPEG/WEBP，最大 20MB
-- JWT 密钥：无硬编码默认值；未设置时随机生成并持久化（chmod 600）
-- 账号密码：无公开默认密码；未设置时随机生成并输出到 stdout
-- 角色权限：admin 可执行所有操作，staff 仅可创建任务和查看
-- 凭据脱敏：`/api/stores` 响应不返回明文 api_key
-- SSRF 防护：`/api/push` 强制 https + `.myshopify.com`，拒绝内网地址
-- XSS 防护：前端 `escapeHtml` 转义；服务端枚举白名单校验
-- GPU 并发：扩散推理路径全局 `threading.Lock` 串行化
-- SDXL 管线缓存：构建一次后常驻
-- 批量事务性：`/api/jobs/batch` 先全量校验再统一写盘
-
-### 已知限制
-
-- DNS 重绑定（TOCTOU）未完全消除
-- 无 GPU 环境下合成引擎为启发式近似，效果有限
-- 去水印为浅色角部 best-effort
-
-## 图片规格
-
-**上传**：PNG / JPEG / WEBP，最大 20MB，任意尺寸
-
-**生成处理**：
-1. `detect_garment_extent` 分析衣料袖长/衣长；`auto` 按 aspect 推断品类
-2. `crop_garment_to_content` 裁剪主体
-3. `align_garment_to_pose` 几何对齐送 IP-Adapter
-4. ControlNet（OpenPose 0.8 + Canny 0.55 锁图案 + Depth 0.95）+ IP-Adapter 0.9
-5. SDXL 生成姿态/光影/人体
-6. `reapply_garment_detail` 边缘衰减贴回纹理；肤色区降 85% 强度
-7. `blend_tryon` 动态 mask + SeamlessClone 贴回脸/手/脚
-8. `_seam_repair` Telea 填 mask 边界接缝
-9. `_correct_skin_tone` 生成肤色拉向原图（排除脸区）
-10. `_sdxl_inpaint_repair`（可选）低降噪局部重绘
-11. `force_white_background(subject_mask)` 纯白底
-
-**输出**：长边 2048px，宽高比跟随底座图
-
-## 技术栈
-
-**前端**：原生 JavaScript（ES 模块）+ Vite 5 + 自研 i18n（zh/en）
-
-**后端**：Python 3 + FastAPI + Uvicorn + PyJWT + PIL / NumPy / OpenCV + JSON 文件持久化
-
-**AI 引擎**：
-- IDM-VTON（CC BY-NC-SA 4.0，禁止商用）
-- SDXL + ControlNet + IP-Adapter（商用合规）
-- 合成引擎（无 GPU 兜底）
-
-**姿态检测**：
-- RTMPose-m（CSPNeXt + RTMCCHead，COCO 17 关键点，CPU 推理）
-- MediaPipe Pose（回退）
-
-**训练**：SDXL LoRA（双格式保存 PEFT + diffusers）+ ControlNet + 一键脚本 `MODEL=lora bash run_train.sh`
 
 ## 快速启动（无 GPU）
 
@@ -276,54 +122,7 @@ export STORE_STAFF_PASSWORD="your-secure-password"
 | GPU | NVIDIA A10（24GB 显存） |
 | 系统 | Linux，CUDA 驱动与 PyTorch 匹配 |
 
-A10 上 SDXL + 双 ControlNet + IP-Adapter 使用 `enable_model_cpu_offload`，VAE fp32 解码。低于此规格可跑合成引擎或关 Depth ControlNet。训练 LoRA 同样按 A10 23GB 验证（约 11 分钟 / 800 步）。
-
-## 已跑通的 GPU 环境（2026-11-04）
-
-换衣管线在以下机器上实测跑通（配方：`LICENSE_MODE=commercial`，`VTON_WARP=0`，`VTON_DETAIL=0`，`VTON_LOCK_ID=1`，`OMP_NUM_THREADS=8`，`HF_ENDPOINT=https://hf-mirror.com`）。
-
-### 硬件
-
-| 项目 | 实测值 |
-|------|--------|
-| GPU | NVIDIA GeForce RTX 4090 D，24564 MiB，compute 8.9 |
-| 驱动 / CUDA | Driver 580.76.05，CUDA 13.0 |
-| CPU | Intel Xeon Platinum 8481C；容器 cgroup 配额 16 核（`cpu.max=1600000 100000`），宿主机可见 192 线程 |
-| 内存 | 容器 cgroup 80GB（`memory.max=85899345920`）；宿主机约 1 TiB |
-| 磁盘 | 系统盘 overlay 30GB；数据盘 50GB |
-| 系统 | Ubuntu 22.04.3 LTS，kernel 5.15.0-94-generic |
-
-### 软件与依赖
-
-解释器：Miniconda `conda 23.7.3` + Python 3.10.12（`/root/miniconda3/bin/python`），pip 23.2.1。系统 `/usr/bin/python3` 未装这些包，跑管线必须用 conda Python。
-
-| 包 | 版本 |
-|----|------|
-| torch | 2.13.0+cu130（cudnn 9.2.0） |
-| torchvision | 0.15.2 |
-| torchaudio | 2.11.0+cu130 |
-| diffusers | 0.40.0 |
-| transformers | 5.20.2 |
-| accelerate | 1.14.0 |
-| peft | 0.20.0 |
-| safetensors | 0.8.0 |
-| huggingface_hub | 1.33.0 |
-| controlnet_aux | 0.0.10 |
-| rembg | 2.0.50 |
-| onnxruntime | 1.15.1 |
-| xformers | 0.0.21 |
-| timm | 0.9.7 |
-| Pillow | 9.4.0 |
-| numpy | 1.23.5 |
-| opencv-python | 4.8.0.76 |
-| opencv-python-headless | 4.7.0.72 |
-| scikit-image | 0.20.0 |
-| scipy | 1.11.2 |
-| einops | 0.6.1 |
-
-该环境未装 `mmcv` / `mmengine` / `mmpose` / `mediapipe` / `fastapi` / `uvicorn`。RTMPose 走 fake deps 注入；MediaPipe 回退依赖本机 `pose_landmarker_full.task`（没有则腰线走 contour/default）。`torchvision 0.15.2` 与 `torch 2.13.0` 不匹配，导入时会警告 `image.so` 加载失败，不影响当前换衣推理。
-
-复现入口见 `scripts/gpu/`（`combo.py` / `combo2.py` / `run_r6.py` / `varA.py` / `varB.py` / `varC.py`）和 `scripts/run_tryon_batch.py`。
+GPU 实测环境（2026-11）：RTX 4090 D 24GB / Driver 580.76.05 / CUDA 13.0 / Miniconda Python 3.10（torch 2.13.0+cu130，diffusers 0.40.0，numpy 1.23.5，opencv 4.8.0）。SDXL 路径 `enable_model_cpu_offload` + VAE fp32 解码；训练 LoRA 按 A10 23GB 验证（约 11 分钟 / 800 步）。复现入口 `scripts/gpu/`（`combo.py` / `run_r6.py` 等）与 `scripts/run_tryon_batch.py`。
 
 ## GPU 部署（商用模式）
 
@@ -342,6 +141,14 @@ python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 curl http://localhost:8000/api/license
 ```
 
+## 引擎选择
+
+| LICENSE_MODE | 引擎优先级 | 商用合规 |
+|---|---|---|
+| `commercial` | FASHN VTON v1.5 -> SDXL Inpaint -> 合成引擎 | 合规 |
+| `research` | IDM-VTON -> 合成引擎 | 不合规 |
+| 未设置 | 合成引擎 | 需确认 |
+
 ## SDXL 训练
 
 ```bash
@@ -351,10 +158,7 @@ MODEL=controlnet bash run_train.sh   # ControlNet
 MODEL=lora_family bash run_train.sh  # 服装 + 人像双 LoRA
 ```
 
-训练基线（v0.1.3+）：
-- `bfloat16`（Ampere+ GPU），CPU 回退 `float32`
-- 双格式保存：PEFT `adapter_model.safetensors` + diffusers `pytorch_lora_weights.safetensors`
-- `time_ids` `[res,res,0,0,res,res]`、`letterbox_rgb` 保宽高比、VAE fp32、min-SNR gamma=5.0
+训练基线（v0.1.3+）：`bfloat16`（Ampere+ GPU）、双格式保存（PEFT + diffusers）、`time_ids` / `letterbox_rgb` 保宽高比、VAE fp32、min-SNR gamma=5.0。
 
 ## 多店铺与推送
 
@@ -366,10 +170,7 @@ MODEL=lora_family bash run_train.sh  # 服装 + 人像双 LoRA
 
 ### 单张推送
 
-完成的任务勾选店铺推送（admin 权限）：
-- Shopify：Admin API 上传商品图
-- WordPress：REST 媒体上传 + WooCommerce 关联
-- 其他平台：仅打标
+完成的任务勾选店铺推送（admin 权限）：Shopify Admin API / WordPress REST 媒体 + WooCommerce 关联 / 其他平台仅打标。
 
 ### 嵌入
 
@@ -377,7 +178,16 @@ MODEL=lora_family bash run_train.sh  # 服装 + 人像双 LoRA
 <iframe src="/embed.html?store=STORE_ID" style="width:100%;min-height:720px;border:0"></iframe>
 ```
 
-## SDXL 引擎环境变量（v0.1.8）
+## 环境变量
+
+```bash
+STORE_JWT_SECRET=<至少 32 字节>
+STORE_ADMIN_PASSWORD=<管理员密码>
+STORE_STAFF_PASSWORD=<员工密码>
+LICENSE_MODE=commercial
+```
+
+### SDXL 引擎（v0.1.8）
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
@@ -390,8 +200,7 @@ MODEL=lora_family bash run_train.sh  # 服装 + 人像双 LoRA
 | `VTON_PATTERN_LOCK_LF_STRENGTH` | `1.0` | 底色光照响应系数 |
 | `VTON_PATTERN_LOCK_HF_STRENGTH` | `0.5` | 花纹光照响应系数 |
 | `VTON_PATTERN_LOCK_LF_BLUR_SIGMA` | `8.0` | 低频提取高斯 sigma |
-| `VTON_PATTERN_LOCK_LIGHTING_MIN` | `0.75` | 亮度比下限 |
-| `VTON_PATTERN_LOCK_LIGHTING_MAX` | `1.25` | 亮度比上限 |
+| `VTON_PATTERN_LOCK_LIGHTING_MIN/MAX` | `0.75/1.25` | 亮度比 clamp |
 | `VTON_PATTERN_LOCK_SKIN_WEIGHT` | `0.85` | 肤色区降权 |
 | `VTON_PATTERN_LOCK_FEATHER_PX` | `5` | mask 边缘羽化像素 |
 | `VTON_PATTERN_LOCK_SKIP_WHITE_BG` | `1` | 跳过边缘连通白底 |
@@ -402,14 +211,23 @@ MODEL=lora_family bash run_train.sh  # 服装 + 人像双 LoRA
 | `VTON_CANNY` | 按品类 0.55/0.45 | Canny 边缘约束 |
 | `VTON_GUIDANCE` | `7.5` | CFG guidance scale |
 | `VTON_SEED` | `42` | 随机种子 |
-| `VTON_PROMPT_HINT` | 空 | 额外 prompt 钩子 |
-| `VTON_INPAINT_REPAIR` | `0` | 设为 `1` 且有权重时启用 SDXL Inpainting 二次修复 |
+| `VTON_MULTI_SEED` | `3` | 多 seed 择优（上限 8） |
+| `VTON_REFIT_ENGINE` | `grid` | 贴回几何引擎 grid/tps/optical_flow |
+| `VTON_INPAINT_REPAIR` | `0` | 设 `1` 且有权重时启用 SDXL Inpainting 二次修复 |
 | `RTMPOSE_FAKE_DEPS` | `1` | 注入空壳 xtcocotools/mmdet/mmcv.ops；真实依赖已装时设 `0` |
+
+FASHN 印花保真管线默认开启（`engine_fashn.py` 内建，无开关；鬼影/残余/核心场各阶段独立 try/except 降级，任一失败保留生成像素）。
+
+## 图片规格
+
+**上传**：PNG / JPEG / WEBP，最大 20MB，任意尺寸
+
+**输出**：长边 2048px，白底 JPEG 或透明 PNG，宽高比跟随底座图
 
 ## 测试
 
 ```bash
-# 后端（265 passed / 1 skipped）
+# 后端（448 passed / 2 skipped）
 cd backend
 python3 -m pytest tests/ -q
 
@@ -422,42 +240,26 @@ ruff check backend/ training/
 ruff format --check backend/ training/
 ```
 
-覆盖：单元（引擎/人种/CRUD/JWT/推送/worker/LoRA/并发/训练几何）、平台适配（clothing_mask/blend_tryon/reapply/detect_garment_extent/肤色/接缝 inpaint/pose 关键点/dress 脖子排除/dress 腿部覆盖/knee 截断）、组件（i18n/render）、集成（全 API 链路）、系统（真实 worker 出图）
+覆盖：单元（引擎/人种/CRUD/JWT/推送/worker/LoRA/并发/训练几何）、平台适配（clothing_mask / blend_tryon / reapply / detect_garment_extent / 肤色 / 接缝 inpaint / pose 关键点 / dress 遮罩）、印花保真（preserve_refit 71 用例：TPS 残差守卫 / 鬼影擦除 / 残余兜底 / 局部环形锚定 / 行分段 delta / 同行布料取样 / blend 软边 / fidelity）、组件（i18n/render）、集成（全 API 链路）、系统（真实 worker 出图）。
 
 ## 目录结构
 
 ```text
 backend/
   engine.py                合成引擎（CPU 兜底）
-  engine_fashn.py          FASHN VTON v1.5 商用主引擎（parser stub + segmentation_free）
+  engine_fashn.py          FASHN VTON v1.5 商用主引擎（parser stub + segmentation_free + 印花保真贴回接线）
   engine_sdxl.py           SDXL Inpaint 兜底引擎（对齐 + ControlNet + IP-Adapter + 动态遮罩 + 图案锁 + 接缝/肤色后处理）
+  preserve_refit.py        印花保真管线（refit warp / 色调匹配 / 鬼影检测擦除 / 残余兜底 / 局部环形锚定 / 核心场混合）
+  quality_gate.py          质检（SSIM / OCR / print_fidelity / delivery_tier）
   platform_presets.py      店规 + detect_garment_extent + clothing_mask + blend_tryon + reapply / pattern_lock + seam/skin + RTMPose/MediaPipe 关键点检测
   export_csv.py            CSV/SKU 批量导出
   lora_io.py               LoRA 加载（PEFT 优先）
-  tests/                   pytest（265 passed）
+  tests/                   pytest（448 passed）
 src/                       前端 SPA + i18n
 training/                  SDXL LoRA / ControlNet 训练脚本
 models/sdxl/lora/          LoRA 权重（120 张训练，rank 16）
 models/rtmpose/            RTMPose-m checkpoint（需手动下载）
 ```
-
-## 环境变量
-
-```bash
-STORE_JWT_SECRET=<至少 32 字节>
-STORE_ADMIN_PASSWORD=<管理员密码>
-STORE_STAFF_PASSWORD=<员工密码>
-LICENSE_MODE=commercial
-# VTON_IPA=0.9  VTON_CANNY=0.55  VTON_DETAIL=1  VTON_PATTERN_LOCK=1 ...
-```
-
-## 引擎选择
-
-| LICENSE_MODE | 引擎优先级 | 商用合规 |
-|---|---|---|
-| `commercial` | FASHN VTON v1.5 -> SDXL Inpaint -> 合成引擎 | 合规 |
-| `research` | IDM-VTON -> 合成引擎 | 不合规 |
-| 未设置 | 合成引擎 | 需确认 |
 
 ## API 概览
 
@@ -473,6 +275,20 @@ GET|POST /api/uploads  /api/uploads/categories
 GET  /api/health  /api/license
 ```
 
+## 安全
+
+本项目经过两轮安全审查：
+
+- 文件服务鉴权：`/files/{path}` 仅暴露白名单目录，仅允许图片后缀；上传路径正则白名单校验，拒绝路径穿越
+- 图片内容验证：PIL 解码校验，仅接受 PNG/JPEG/WEBP，最大 20MB
+- JWT 密钥无硬编码默认值；账号密码未设置时随机生成并持久化（chmod 600）
+- 角色权限：admin 全操作，staff 仅创建任务和查看；凭据脱敏（`/api/stores` 不返回明文 api_key）
+- SSRF 防护：`/api/push` 强制 https + `.myshopify.com`，拒绝内网地址
+- XSS 防护：前端 `escapeHtml` 转义；服务端枚举白名单校验
+- GPU 并发：扩散推理路径全局 `threading.Lock` 串行化；SDXL 管线缓存常驻；批量事务性（先全量校验再统一写盘）
+
+已知限制：DNS 重绑定（TOCTOU）未完全消除；无 GPU 环境下合成引擎为启发式近似；去水印为浅色角部 best-effort。
+
 ## 授权说明
 
 | 组件 | 许可证 | 商用 | 本项目使用方式 |
@@ -484,21 +300,31 @@ GET  /api/health  /api/license
 | Stable Diffusion XL | CreativeML Open RAIL++-M | 允许（作者已获商用授权） | 商用换衣管线的生成底座（FASHN 失败兜底） |
 | ControlNet | Open RAIL++-M | 允许（作者已获商用授权） | OpenPose / Canny / Depth 条件注入 |
 | IP-Adapter | Apache 2.0 | 允许 | 服装特征注入 |
-| RTMPose | Apache 2.0 | 允许 | 关键点检测（腰线插值 + knee 截断） |
+| RTMPose | Apache 2.0 | 允许 | 关键点检测（腰线插值 + knee 截断 + 肩部掩膜） |
 | Rembg (U2Net) | MIT | 允许 | 主体掩膜提取 |
 | MediaPipe | Apache 2.0 | 允许 | 关键点检测回退 |
 | PLTON 论文方法 | 学术公开 | 思路可借鉴 | LF/HF 频率分离的 CPU 后处理实现，未使用其代码或权重 |
-| 本项目核心代码 | 商用权归作者所有 | 允许 | 换衣管线、平台适配、后处理、训练脚本等全部自研代码 |
+| 本项目核心代码 | 商用权归作者所有 | 允许 | 换衣管线、印花保真、平台适配、后处理、训练脚本等全部自研代码 |
 
 **商用部署**：设 `LICENSE_MODE=commercial`，引擎优先级 FASHN VTON v1.5 → SDXL Inpaint → 合成引擎，不加载 IDM-VTON。FASHN 主模型与 DWPose / YOLOX 权重为 Apache 2.0；fashn-human-parser（NVIDIA SegFormer）含商用限制，商用路径注入零张量 stub、权重永不下载。作者已获得 SDXL / ControlNet 商用授权，IP-Adapter / RTMPose / Rembg / MediaPipe 均为商用合规许可，可安全用于商业场景。
 
+## 历史版本
+
+| 版本 | 要点 |
+|------|------|
+| v0.1.8 | RTMPose-m 关键点检测替代 MediaPipe（侧/背面退化 13.7%→2.2%）；腰线 shoulder→hip 插值（0.544）；dress 脖子排除 + 膝部截断 |
+| v0.1.7 | warp 垂直锚点对齐（logo 偏位修正）；GARMENT_BOX 品类垂直范围；肤色校正排除脸区；inpaint 修复聚焦遮罩 + 管线单例 |
+| v0.1.6 | 频率分离 pattern lock（PLTON 思路）：底色全强度响应光照、花纹半强度——立体感与图案保真同时成立 |
+| v0.1.5 | 换衣后遗症图像修复：胸口白块 / 手臂变白 / 上衣齐腰 / 图案被重画（见 `git log`） |
+| v0.1.4 | Canny 按品类 / IP-Adapter 0.9 / detect_garment_extent / SeamlessClone 贴回 |
+| v0.1.3 | 「AI 出骨架光影，代码保商品细节」混合策略 + LoRA 训练基线 |
+
 ## 感谢
 
-- [IDM-VTON](https://github.com/yisol/IDM-VTON) — **Improving Diversity and Accuracy of Virtual Try-On via the Body Part-Aware Pipeline**（ECCV 2024）。本项目借鉴其 garment warp 思路，但未使用其权重（CC BY-NC-SA 4.0 禁止商用）
-- [RTMPose](https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose) — **RTMPose: Real-Time Multi-Person Pose Estimation framework based on MMPose**（arXiv:2306.06029）。本项目用 RTMPose-m（COCO 17 点）做腰线 shoulder→hip 插值和 dress knee 截断，CPU 推理
-- [PLTON](https://arxiv.org/abs/2401.11239) — **Frequency-Aware Virtual Try-On with High-Fidelity Detail Preservation**。本项目借鉴其 LF/HF 频率分离思想，在 SDXL 管线的 CPU 后处理层实现底色全强度调光 + 花纹半强度调光
-- [Stable Diffusion XL](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0) — 商用换衣管线的生成底座，ControlNet + IP-Adapter 条件注入
-- [ControlNet](https://github.com/lllyasviel/ControlNet) — 姿态引导（OpenPose 0.8）+ 图案锁定（Canny 0.55）+ 深度约束（Depth 0.95）
-- [IP-Adapter](https://github.com/tencent-ailab/IP-Adapter) — 服装特征注入（weight 0.9），把平铺图样式带入生成结果
-- [Rembg](https://github.com/danielgatis/rembg) — 主体掩膜（U2Net），用于服装裁切、纯白背景压制和 dress mask 生成
-- [MediaPipe Pose](https://github.com/google-ai/mediapipe) — RTMPose 加载失败时的关键点检测回退
+- [FASHN](https://fashn.ai) — VTON v1.5 商用主引擎（像素空间，Apache 2.0）
+- [IDM-VTON](https://github.com/yisol/IDM-VTON)（ECCV 2024）— garment warp 思路借鉴（未用其权重）
+- [RTMPose](https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose)（arXiv:2306.06029）— COCO 17 关键点腰线插值 / 膝部截断 / 肩部掩膜
+- [PLTON](https://arxiv.org/abs/2401.11239) — LF/HF 频率分离思想（CPU 后处理实现）
+- [Stable Diffusion XL](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0) / [ControlNet](https://github.com/lllyasviel/ControlNet) / [IP-Adapter](https://github.com/tencent-ailab/IP-Adapter) — 商用管线生成底座与条件注入
+- [Rembg](https://github.com/danielgatis/rembg) — 主体掩膜（U2Net）
+- [MediaPipe Pose](https://github.com/google-ai/mediapipe) — 关键点检测回退
