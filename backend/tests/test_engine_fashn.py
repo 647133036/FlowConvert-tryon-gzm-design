@@ -129,9 +129,10 @@ def test_compose_tryon_fashn_calls_segmentation_free(monkeypatch, tmp_path):
 
 def test_compose_tryon_fashn_postfx_raw_bypass(monkeypatch, tmp_path):
     """VTON_POSTFX=0: 跳过 protect/refit/anchor/ghost/inpaint/reapply 全
-    POSTFX 链路, 直接交付 FASHN 原生 32x32(不 resize 到 64), 元数据
-    postfx=raw, lock_identity=False(无 keep_mask)。r14 GPU 视觉验收:
-    s0_fashn_raw 比 final_2048 好, POSTFX 净负, 须支持 RAW 直出。
+    POSTFX 链路 + 印花核心直贴, 交付 FASHN 原始生成但做 CPU Lanczos 放大到
+    long_side(SKU 像素下限), 元数据 postfx=raw + delivery_tier=review(人工
+    视觉验收采用才落 PROD)。r14 GPU 视觉验收: s0_fashn_raw 比 final_2048
+    好, POSTFX 净负, 须支持 RAW 直出 + CPU 放大交付。
     """
     import engine_fashn
     import engine_sdxl
@@ -164,11 +165,51 @@ def test_compose_tryon_fashn_postfx_raw_bypass(monkeypatch, tmp_path):
     PILImage.new("RGB", (32, 32), (200, 10, 10)).save(garment)
 
     out = engine_fashn.compose_tryon_fashn(person, garment, "women", "dress", 64, "white", "western_europe")
-    # RAW 直出: 不 resize 到 64, 保持 FASHN 原生 32x32
-    assert max(out.size) == 32, f"POSTFX=0 须直出 FASHN 原生尺寸, 实测 {out.size}"
+    # RAW 档: CPU Lanczos 放大到 long_side=64(满足 SKU 像素下限), 不跑印花核心直贴
+    assert max(out.size) == 64, f"POSTFX=0 RAW 档须放大到 long_side=64, 实测 {out.size}"
     assert out.info["postfx"] == "raw"
+    assert out.info["delivery_tier"] == "review", "RAW 档无印花保真分, 须走 review 人工验收"
     assert out.info["detail_applied"] is False
     assert out.info["lock_identity"] is False
+
+
+def test_compose_tryon_fashn_raw_no_downsize_when_at_long_side(monkeypatch, tmp_path):
+    """RAW 档只做放大不做缩小: FASHN 原生 64x64 已达 long_side=64, 保持原样,
+    不触发放大, 像素级不变(验证放大只在长边不足时发生)。"""
+    import engine_fashn
+    import engine_sdxl
+    import numpy as np
+    import platform_presets
+    import prewhiten as prewhiten_mod
+    from PIL import Image as PILImage
+
+    class FakePipeline:
+        def __init__(self, weights_dir):
+            pass
+
+        def __call__(self, **kwargs):
+            arr = np.full((64, 64, 3), 128, dtype=np.uint8)
+            return types.SimpleNamespace(images=[PILImage.fromarray(arr)])
+
+    fake_mod = types.ModuleType("fashn_vton")
+    fake_mod.TryOnPipeline = FakePipeline
+    monkeypatch.setitem(sys.modules, "fashn_vton", fake_mod)
+    monkeypatch.setattr(engine_fashn, "FASHN_DIR", tmp_path)
+    monkeypatch.setattr(engine_fashn, "_fashn_state", {"pipe": None})
+    monkeypatch.setenv("VTON_POSTFX", "0")
+    monkeypatch.setattr(engine_sdxl, "foreground_mask", lambda img: None)
+    monkeypatch.setattr(platform_presets, "force_white_background", lambda img, subject_mask=None: img)
+    monkeypatch.setattr(prewhiten_mod, "prewhiten_input", lambda img: (img, {"status": "already_white"}))
+
+    person = tmp_path / "p.png"
+    garment = tmp_path / "g.png"
+    PILImage.new("RGB", (64, 64), (10, 20, 30)).save(person)
+    PILImage.new("RGB", (64, 64), (200, 10, 10)).save(garment)
+
+    out = engine_fashn.compose_tryon_fashn(person, garment, "women", "dress", 64, "white", "western_europe")
+    assert out.size == (64, 64), f"已达 long_side 不放大, 实测 {out.size}"
+    assert out.info["postfx"] == "raw"
+    assert out.info["delivery_tier"] == "review"
 
 
 def test_compose_tryon_fashn_fidelity_survives_bg_and_resize(monkeypatch, tmp_path):

@@ -175,6 +175,10 @@ def process_job(job: dict, bases: list[dict]) -> None:
         _tier_fields["print_fidelity"] = result.info["print_fidelity"]
     if "delivery_tier" in result.info:
         _tier_fields["delivery_tier"] = result.info["delivery_tier"]
+    if "postfx" in result.info:
+        # postfx=raw 档: 无印花保真分, 交付档位走 review(人工视觉验收采用
+        # 才落 PROD), 记录在案供 REVIEW 图层回写。
+        _tier_fields["postfx"] = result.info["postfx"]
     if "multiseed" in result.info:
         _tier_fields["multiseed"] = result.info["multiseed"]
     if _tier_fields:

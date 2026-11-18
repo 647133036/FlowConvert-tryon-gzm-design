@@ -251,10 +251,10 @@ def compose_tryon_fashn(
     pattern_on = os.environ.get("VTON_PATTERN_LOCK", "1") != "0"
     lock_on = os.environ.get("VTON_LOCK_ID", "1") != "0"
     # POSTFX 全链路开关: 0=跳过 protect/refit/anchor/ghost/inpaint/reapply 全
-    # 后处理, 直接交付 FASHN 原始生成(r14 GPU 视觉验收: s0_fashn_raw 比
-    # final_2048 好——露肩结构变异/印花放大扭曲/边缘拖影全出自 POSTFX 净负)。
-    # 默认 1(启用全链路), 0 时 result 保持 FASHN 原样, 跳过 resize 到
-    # long_side(FASHN 原生 768 直出), 元数据记 postfx=raw。
+    # 后处理 + 印花核心直贴, 交付 FASHN 原始生成(r14 GPU 视觉验收: s0_fashn_raw
+    # 比 final_2048 好——露肩结构变异/印花放大扭曲/边缘拖影全出自 POSTFX 净负)。
+    # 默认 1(启用全链路), 0 时 result 保持 FASHN 原样但做 CPU Lanczos 放大到
+    # long_side(SKU 像素下限), 元数据记 postfx=raw + delivery_tier=review。
     postfx_on = os.environ.get("VTON_POSTFX", "1") != "0"
     detail_applied = False
     keep_mask = None
@@ -368,9 +368,12 @@ def compose_tryon_fashn(
         except Exception:
             logger.exception("FASHN print fidelity scoring failed; tier not set")
 
-    # POSTFX=0 时跳过 resize + 印花核心直贴全链路, 直接交付 FASHN 原生
-    # 尺寸(768x576), 元数据记 postfx=raw, 供 REVIEW 视觉验收 RAW 直出
-    # 与 POSTFX 全链路的质量对比(定位净负层)。
+    # POSTFX=0 时跳过 protect/refit/anchor/ghost/inpaint/reapply 全后处理
+    # (r14 GPU 视觉验收: s0_fashn_raw 比 final_2048 好——露肩结构变异/印花
+    # 放大扭曲/边缘拖影全出自 POSTFX 净负)。但 SKU 交付有像素下限, 故 RAW
+    # 档仍做 CPU Lanczos 等比放大到 long_side(与 POSTFX 链的 resize 同款,
+    # 无 GPU/重绘), 跳过印花核心直贴。元数据记 postfx=raw + delivery_tier,
+    # 走 REVIEW 档由运营视觉验收后采用落 PROD。
     if postfx_on:
         if background == "transparent":
             result = _remove_background(result)
@@ -389,7 +392,23 @@ def compose_tryon_fashn(
         if abs(scale - 1) > 0.01:
             result = result.resize((int(rw * scale), int(rh * scale)), Image.Resampling.LANCZOS)
     else:
-        pass  # 元数据 postfx=raw 在尾部统一写入
+        # RAW 档交付: 背景归一(白底/去底) + CPU Lanczos 放大到 SKU 像素下限,
+        # 不跑印花核心直贴(净负)。放大只在长边不足时发生, 已达标则保持原样。
+        if background == "transparent":
+            result = _remove_background(result)
+        elif background == "white":
+            if result.mode == "RGBA":
+                bg = Image.new("RGB", result.size, (255, 255, 255))
+                bg.paste(result, mask=result.split()[-1])
+                result = bg
+            else:
+                result = result.convert("RGB")
+        rw, rh = result.size
+        if max(rw, rh) < long_side:
+            scale = long_side / max(rw, rh)
+            result = result.resize((int(rw * scale), int(rh * scale)), Image.Resampling.LANCZOS)
+        # RAW 档: 无印花核心直贴 → 无保真分可度量, 直接进 REVIEW 人工验收
+        _tier_val = "review"
 
     # 印花核心直贴(最终分辨率): 放大后的成图上重投 + 核心检测 + 贴印,
     # 印花笔触保参考原样清晰度(hf/folds 关, 不受生成纹理污染); 保真分
