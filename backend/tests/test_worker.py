@@ -237,3 +237,56 @@ def test_process_job_multiseed_picks_best_print_fidelity(tmp_path, ready_base_im
     assert ms.get("chosen_seed") == 1042
     assert ms.get("scores", {}).get("42") == 0.40
     assert ms.get("scores", {}).get("1042") == 0.90
+
+
+def test_process_job_idempotent_cache_hit(tmp_path, ready_base_image, monkeypatch):
+    """幂等缓存(§03/§06): 同人同衣同参数重复提交 → 第二张 0 元复用成图。"""
+    import store as store_mod
+
+    monkeypatch.setenv("VTON_MULTI_SEED", "0")
+    src = store_mod.UPLOADS / "cache_tee.jpg"
+    _make_sku_png(src, (200, 200), (60, 60, 160))
+    base_table = [
+        {
+            "id": "base_women_01",
+            "file": None,
+            "path": str(ready_base_image),
+            "audience": "women",
+            "ethnicity": "east_asia",
+        }
+    ]
+    job1 = create_job({"base_id": "base_women_01", "source_name": "cache_tee.jpg", "title": "c1"})
+    process_job(copy.deepcopy(job1), base_table)
+    final1 = get_job(job1["id"])
+    assert final1["status"] == "done"
+    assert final1.get("idem_key")
+    assert final1.get("cache_hit") is False
+    assert final1.get("cost_est_cent", 0) >= 0
+
+    # 同输入重投: 队列重投/双击提交等价 → 命中缓存, 0 元秒回。
+    job2 = create_job({"base_id": "base_women_01", "source_name": "cache_tee.jpg", "title": "c2"})
+    assert job2["id"] != job1["id"]
+    process_job(copy.deepcopy(job2), base_table)
+    final2 = get_job(job2["id"])
+    assert final2["status"] == "done"
+    assert final2["cache_hit"] is True
+    assert final2["cost_cent"] == 0
+    assert final2["idem_key"] == final1["idem_key"]
+    from pathlib import Path as _P
+
+    out = store_mod.RESULTS / _P(final2["result_url"]).name
+    assert out.is_file()
+    assert out.stat().st_size > 0
+
+
+def test_claim_next_job_respects_prio():
+    """§07: interactive(prio 0) 不被 batch(prio 1) 饿死。"""
+    from worker import process_job  # noqa: F401  确保 worker 可导入
+
+    jb = create_job({"base_id": "x", "source_name": "b.jpg", "title": "batch", "prio": 1})
+    ji = create_job({"base_id": "x", "source_name": "i.jpg", "title": "interactive", "prio": 0})
+    claimed = claim_next_job()
+    assert claimed["id"] == ji["id"]
+    assert claimed["prio"] == 0
+    next_one = claim_next_job()
+    assert next_one["id"] == jb["id"]

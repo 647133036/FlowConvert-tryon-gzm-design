@@ -294,6 +294,10 @@ def delete_base(base_id: str) -> None:
 
 def create_job(payload: dict) -> dict:
     def _add(state: dict):
+        try:
+            _prio = int(payload.get("prio", 1))
+        except (TypeError, ValueError):
+            _prio = 1
         job = {
             "id": uid("job"),
             "status": "queued",
@@ -311,6 +315,8 @@ def create_job(payload: dict) -> dict:
             "source_name": payload.get("source_name", ""),
             "source_url": payload.get("source_url", ""),
             "bound_store_id": payload.get("bound_store_id", ""),
+            # §07 队列折叠: prio 0=interactive(永不饿死) / 1=batch / 2=postfx。
+            "prio": _prio,
             "result_url": "",
             "preview_url": "",
             "progress": 0,
@@ -348,14 +354,23 @@ def list_jobs() -> list[dict]:
 
 def claim_next_job() -> dict | None:
     def _claim(state: dict):
+        best = None
         for item in state["jobs"]:
-            if item["status"] == "queued":
-                item["status"] = "running"
-                item["progress"] = 5
-                item["message"] = "Worker claimed, processing started"
-                item["updated_at"] = _now()
-                return copy.deepcopy(item)
-        return None
+            if item["status"] != "queued":
+                continue
+            # §02 INDEX(state, prio, created_at): 交互任务不被批量饿死。
+            if best is None or (item.get("prio", 1), item.get("created_at", 0)) < (
+                best.get("prio", 1),
+                best.get("created_at", 0),
+            ):
+                best = item
+        if best is None:
+            return None
+        best["status"] = "running"
+        best["progress"] = 5
+        best["message"] = "Worker claimed, processing started"
+        best["updated_at"] = _now()
+        return copy.deepcopy(best)
 
     return with_state(_claim)
 

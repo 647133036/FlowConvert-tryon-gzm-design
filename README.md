@@ -1,8 +1,19 @@
-# Atelier v0.1.9
+# Atelier v0.2.0
 
 店铺后台固定底图换衣工作台。选一张模特底图，批量拖入服装平铺图，队列生成正面成品，下载或推送到商品页。界面内置中英文一键切换。
 
-**基本运行条件：8 核 CPU / 32GB 内存 / NVIDIA A10（24GB 显存）。** 商用管线（FASHN VTON v1.5 像素空间换装 + 确定性印花保真贴回）按此规格验证；无 GPU 时自动降级合成引擎，效果有限。
+**基本运行条件：8 核 CPU / 32GB 内存 / NVIDIA A10（24GB 显存）。** 商用管线（FASHN VTON v1.5 像素空间换装 + 确定性印花保真贴回）按此规格验证；无 GPU 时自动降级合成引擎，或配置 AIDGE API Key 走云端 Provider（纯 CPU 机器可出商用图）。
+
+## v0.2.0 更新日志：Provider 层（生成源可插拔 + 幂等缓存 + 成本记账）
+
+按开工设计稿（`.monkeycode/specs/ai-tryon-platform/开工设计稿.html`）落地编排层第一块：**模型是耗材，路由是资产**——换引擎不动业务。
+
+- `backend/tryon_provider.py`：Provider 注册表 + 路由（`fashn_local` / `aidge`，`fashn_api`/`leap`/`volc` 注册未实现给原因）；幂等键（内容指纹 + 生成参数 + pipeline_version，不含 provider/时间戳）；402 熔断 / 429 Retry-After / 5xx 2^n 退避；价格表 env 可覆盖。
+- **Aidge（阿里 AiTryOn API）Provider**：纯 CPU 机器配 `AIDGE_API_KEY` + `AIDGE_PUBLIC_BASE_URL` 即可出商用图，与本地 FASHN 共用同一条 POSTFX 回贴链；签名结果 URL 立即落盘。
+- **幂等缓存**：同人同衣同参数重复提交（队列重投/双击）直接复用成图，`cache_hit=true`、0 元秒回。
+- **成本记账**：job 落 `provider` / `cost_est_cent` / `cost_cent` / `cache_hit`；本地摊薄价与 aidge 单价均 env 可调。
+- **prio 队列**：job 支持 `prio` 0/1/2（交互/批量/后处理），交互任务不被批量饿死。
+- 全量测试 466 passed（新增 Provider 层 16 例 + worker 幂等/队列 2 例：幂等键组成/熔断/退避/缓存命中/prio）。
 
 ## v0.1.9 更新日志：印花保真管线（FASHN 商用路径）
 
@@ -217,6 +228,33 @@ LICENSE_MODE=commercial
 | `RTMPOSE_FAKE_DEPS` | `1` | 注入空壳 xtcocotools/mmdet/mmcv.ops；真实依赖已装时设 `0` |
 
 FASHN 印花保真管线默认开启（`engine_fashn.py` 内建，无开关；鬼影/残余/核心场各阶段独立 try/except 降级，任一失败保留生成像素）。
+
+### Provider 层（v0.2.0）
+
+生成源可插拔：本地 FASHN 与阿里云 Aidge AiTryOn 双 Provider，共用同一条 POSTFX 回贴链。设计稿见 `.monkeycode/specs/ai-tryon-platform/开工设计稿.html`。
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `VTON_PROVIDER` | `auto` | 生成源路由：`auto`（aidge 可用则用）/ `fashn_local` / `aidge` |
+| `AIDGE_API_KEY` | 空 | Aidge API Key（可配 `DASHSCOPE_API_KEY`）；未配则 aidge 不可用，自动回落本地 |
+| `AIDGE_PUBLIC_BASE_URL` | 空 | 本服务的公网基地址（Aidge 经公网 URL 拉取模特/服装图）；纯内网部署留空即本地 |
+| `AIDGE_ENDPOINT` | `https://aidge.aliyuncs.com` | Aidge API 端点 |
+| `AIDGE_API_VERSION` | `2026-04-28` | `x-acs-version` 头 |
+| `AIDGE_COST_CENT` | `15` | aidge 单张参考价（分，仅记账） |
+| `AIDGE_TIMEOUT` | `120` | 请求超时秒 |
+| `AIDGE_MAX_RETRIES` | `3` | 5xx/超时/429 重试上限 |
+| `AIDGE_BREAKER_SECONDS` | `1800` | 402 熔断窗口（没钱≠抖动，绝不重试） |
+| `VTON_FASHN_LOCAL_COST_CENT` | `5` | 本地 GPU 摊薄参考价（分/张，仅记账） |
+| `VTON_PIPELINE_VERSION` | `0.2.0` | 幂等键组成项；发版自动灰度失效旧缓存 |
+
+行为要点：
+
+- **幂等**：`idem_key = sha256(底图内容|服装内容|参数|mode|seed|pipeline_version)`；同人同衣同参数重复提交直接复用上一张成图（job 字段 `cache_hit=true`、`cost_cent=0`）。键不含 provider 与时间戳。
+- **熔断/退避**：402 直落失败并熔断 30 分钟；429 读 `Retry-After`；5xx/超时按 2^n 退避重试（≤3 次）。
+- **成本记账**：job 落 `provider` / `cost_est_cent`（提交时估）/ `cost_cent`（实扣）/ `cache_hit` 字段。
+- **队列优先级**：job 支持 `prio`（0=交互、1=批量、2=后处理），交互任务不被批量饿死。
+- **Aidge 出图约束**：两边 256–2049px 自动适配；签名结果 URL 立即下载落盘（不存 URL）。
+- `/api/engine` 的 `providers` 块暴露路由/价格/可用性。
 
 ## 图片规格
 

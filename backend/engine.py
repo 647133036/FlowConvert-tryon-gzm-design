@@ -1170,12 +1170,17 @@ def compose_tryon(
             from engine_fashn import compose_tryon_fashn, fashn_available
 
             fashn_avail, fashn_reason = fashn_available()
-            if fashn_avail:
+            # Provider 层: aidge(API)出图不需要本地 GPU/权重; 纯 CPU 机器
+            # 也能走 commercial 链(§00 L3 可插拔)。
+            from tryon_provider import active_provider
+
+            aidge_active = active_provider() == "aidge"
+            if fashn_avail or aidge_active:
                 try:
                     img = compose_tryon_fashn(
                         base_path, garment_path, audience, garment_type, long_side, background, ethnicity
                     )
-                    engine_name = "fashn-vton"
+                    engine_name = img.info.get("engine") or "fashn-vton"
                     img.info["engine"] = engine_name
                     img.info.setdefault("engine_degraded", False)
                     img.info.setdefault("degraded_reason", "")
@@ -1271,11 +1276,22 @@ def engine_status() -> dict:
     engine = "composite-fallback"
     commercial_compliant = False
 
+    providers = {}
+    try:
+        from tryon_provider import provider_status
+
+        providers = provider_status()
+    except Exception as e:  # noqa: BLE001
+        providers = {"error": str(e)}
+
     if license_allowed and avail:
         engine = "idm-vton"
         commercial_compliant = False
     elif _LICENSE_MODE == "commercial" and fashn_avail:
         engine = "fashn-vton"
+        commercial_compliant = True
+    elif _LICENSE_MODE == "commercial" and providers.get("active") == "aidge":
+        engine = "aidge-aitryon"
         commercial_compliant = True
     elif _LICENSE_MODE == "commercial" and sdxl_avail:
         engine = "sdxl-commercial"
@@ -1301,6 +1317,7 @@ def engine_status() -> dict:
         "license_reason": license_reason if not license_allowed else "",
         "commercial_compliant": commercial_compliant,
         "compliance_advice": _get_compliance_advice(engine, _LICENSE_MODE, sdxl_avail, fashn_avail),
+        "providers": providers,
         "weights_dir": str(WEIGHTS_DIR),
         "idm_vton_dir": str(_IDM_DIR),
         "sdxl_dir": str(_REPO_ROOT / "models" / "sdxl"),

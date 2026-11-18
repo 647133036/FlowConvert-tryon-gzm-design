@@ -47,7 +47,7 @@ from store import (
 )
 from worker import start_worker
 
-app = FastAPI(title="Atelier Try-On", version="0.1.9")
+app = FastAPI(title="Atelier Try-On", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

@@ -212,23 +212,37 @@ def compose_tryon_fashn(
         garment_type = infer_auto_garment_type(garment_extent)
 
     category = fashn_category(garment_type)
-    pipe = _get_fashn_pipe()
     seed = int(os.environ.get("VTON_SEED", "42"))
     steps = int(os.environ.get("VTON_FASHN_STEPS", "30"))
     guidance = float(os.environ.get("VTON_FASHN_GUIDANCE", "1.5"))
 
-    with _GPU_LOCK:
-        output = pipe(
-            person_image=base_img,
-            garment_image=garment_img,
-            category=category,
-            garment_photo_type="flat-lay",
-            num_timesteps=steps,
-            guidance_scale=guidance,
-            seed=seed,
-            segmentation_free=True,
-        )
-    result = output.images[0]
+    # Provider 层(§00 L3): 生成源可插拔, 本地 FASHN 只是默认 Provider。
+    # Aidge 出图与本地出图共用同一条 POSTFX 链(protect/preserve)——
+    # 模型是耗材, 路由是资产(§07)。aidge 失败上抛, 由 engine 落 SDXL/
+    # composite 降级链并记 degraded 原因。
+    from tryon_provider import active_provider, aidge_generate
+
+    result = None
+    if active_provider() == "aidge":
+        result = aidge_generate(base_img, garment_img, garment_type)
+        result.info["engine"] = "aidge-aitryon"
+    if result is None:
+        pipe = _get_fashn_pipe()
+        with _GPU_LOCK:
+            output = pipe(
+                person_image=base_img,
+                garment_image=garment_img,
+                category=category,
+                garment_photo_type="flat-lay",
+                num_timesteps=steps,
+                guidance_scale=guidance,
+                seed=seed,
+                segmentation_free=True,
+            )
+        result = output.images[0]
+    # 后续 resize/贴回/fromarray 会重建 Image 丢 info, 引擎标签与成本在此暂存。
+    _engine_tag = result.info.get("engine") or "fashn-vton"
+    _provider_cost = result.info.get("provider_cost_cent")
     if result.mode != "RGB":
         result = result.convert("RGB")
 
@@ -546,7 +560,9 @@ def compose_tryon_fashn(
             degraded_reasons.append("FASHN full-res print paste failed")
 
     degraded_reason = "; ".join(degraded_reasons)
-    result.info["engine"] = "fashn-vton"
+    result.info["engine"] = _engine_tag
+    if _provider_cost is not None:
+        result.info["provider_cost_cent"] = _provider_cost
     result.info["engine_degraded"] = bool(degraded_reason)
     result.info["degraded_reason"] = degraded_reason
     result.info["detail_applied"] = detail_applied
