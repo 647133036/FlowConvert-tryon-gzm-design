@@ -1,18 +1,22 @@
-# Atelier v0.2.1
+ # Atelier v0.2.2
 
-> # 商用声明
->
-> **本项目核心代码的商用权归作者所有，任何商用部署、商用集成、商用修改均需联系作者获取授权。**
->
-> 未经授权的商用使用（包括但不限于：部署到生产环境、集成到 SaaS 产品、嵌入到客户端、用于商业广告/电商运营、转售或再许可）均构成侵权。
->
-> 商用联系：请通过仓库 issue 或作者公开渠道联系，说明使用场景与规模。
+ > # 商用声明
+ >
+ > **本项目核心代码的商用权归作者所有，任何商用部署、商用集成、商用修改均需联系作者获取授权。**
+ >
+ > 未经授权的商用使用（包括但不限于：部署到生产环境、集成到 SaaS 产品、嵌入到客户端、用于商业广告/电商运营、转售或再许可）均构成侵权。
+ >
+ > 商用联系：请通过仓库 issue 或作者公开渠道联系，说明使用场景与规模。
 
----
+ ---
 
-店铺后台固定底图换衣工作台。选一张模特底图，批量拖入服装平铺图，队列生成正面成品，下载或推送到商品页。界面内置中英文一键切换。
+ 店铺后台固定底图换衣工作台。选一张模特底图，批量拖入**服装平铺图**，队列生成正面成品，下载或推送到商品页。界面内置中英文一键切换。
 
-**基本运行条件：8 核 CPU / 32GB 内存 / NVIDIA 4090 D（24GB 显存）。** 商用主引擎 FASHN VTON v1.5（像素空间）按此规格验证；无 GPU 时自动降级合成引擎，或配 `AIDGE_API_KEY` 走云端 Provider（纯 CPU 机器可出商用图）。
+ > **输入要求**：服装参考图必须是**平铺（flat-lay）衣服图**，**不是**模特穿着图。FASHN 引擎按平铺几何处理参考图；喂模特穿着图会被误判为衣服的一部分，导致肩膀、手臂等人体部位被啃掉（视觉验收缺陷的根因）。
+ >
+ > **GPU 并发**：扩散推理由全局 `threading.Lock` 升级为 `BoundedSemaphore(GPU_PARALLELISM)`，默认 3 并发。4090 D（24GB）实测 3 并发 FASHN 任务峰值 VRAM ≈5.7GB（24%），可同时跑 3 个任务。
+
+ **基本运行条件：8 核 CPU / 32GB 内存 / NVIDIA 4090 D（24GB 显存）。** 商用主引擎 FASHN VTON v1.5（像素空间）按此规格验证；无 GPU 时自动降级合成引擎，或配 `AIDGE_API_KEY` 走云端 Provider（纯 CPU 机器可出商用图）。
 
 ---
 
@@ -43,8 +47,10 @@
 │   ③ 阿里云百炼 AiTryOn (同步 API, aidge 端点)                          │
 │   ④ 阿里云视觉智能 VIAPI (按次调用, 同源 aidge)                        │
 │   ⑤ 第三方 API        (预留钩子, 实现 Provider 即插即用)               │
-│   路由: VTON_PROVIDER=auto → 云端不可用自动回落 FASHN → 失败 → SDXL    │
-│   → 合成引擎兜底                                                       │
+ │   路由: VTON_PROVIDER=auto → 云端不可用自动回落 FASHN → 失败 → SDXL    │
+ │   → 合成引擎兜底                                                       │
+ │   GPU 并发: BoundedSemaphore(GPU_PARALLELISM, 默认 3), 3 任务同卡;     │
+ │     OOM 自动 empty_cache + 重试; worker 数 = max(WORKERS, GPU_PAR)      │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ L1  模型 / 权重层                                                       │
 │   FASHN 1.5.0 (Apache 2.0, 像素空间, segmentation_free=True)           │
@@ -53,11 +59,13 @@
 │   RTMPose-m (关键点检测, Apache 2.0)                                   │
 │   fashn-human-parser (NVIDIA License, 商用路径注入 stub, 权重不下载)  │
 ├─────────────────────────────────────────────────────────────────────────┤
-│ L0  基础设施                                                            │
-│   合成引擎 (CPU, backend/engine.py, 无 GPU 兜底)                        │
-│   印花保真管线 (backend/preserve_refit.py, 确定性贴回, fidelity=1.0)   │
-│   质检分档 (backend/quality_gate.py, SSIM/OCR/print_fidelity)          │
-│   平台规格化 (backend/platform_presets.py, 裁切/压缩/品类检测)         │
+ │ L0  基础设施                                                            │
+ │   合成引擎 (CPU, backend/engine.py, 无 GPU 兜底)                        │
+ │   印花保真管线 (backend/preserve_refit.py, 确定性贴回, fidelity=1.0)   │
+ │   质检分档 (backend/quality_gate.py, SSIM/OCR/print_fidelity,          │
+ │     ssim data_range=1.0 兼容 skimage≥0.21)                              │
+ │   平台规格化 (backend/platform_presets.py, 裁切/压缩/品类检测/         │
+ │     u2net 主体掩膜)                                                     │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -135,7 +143,8 @@ SSE 四层无缓冲：Vite `configure` 关 proxy buffer + Nginx `proxy_buffering
 | pyjwt | 2.10.1 | JWT 认证 |
 | aiofiles | 24.1.0 | 异步文件 I/O |
 | requests | 2.32.3 | HTTP 客户端（百炼 / VIAPI / 推送） |
-| opencv-python-headless | ≥4.9.0 | 合成引擎 2D 变形（纯 CPU） |
+ | opencv-python-headless | ≥4.9.0 | 合成引擎 2D 变形（纯 CPU） |
+ | scikit-image | ≥0.21 | SSIM 质检（`ssim_score` 传 `data_range=1.0`，float32 必须显式指定） |
 
 GPU 环境额外（`requirements.txt` 注释段，按部署环境启用）：
 
@@ -146,10 +155,10 @@ GPU 环境额外（`requirements.txt` 注释段，按部署环境启用）：
 | transformers | ≥4.40.0 | 模型加载 |
 | accelerate | ≥0.30.0 | CPU offload |
 | controlnet-aux | ≥0.0.7 | ControlNet 条件注入 |
-| rembg | ≥2.0.50 | 主体掩膜（U2Net） |
-| fashn-human-parser | 0.1.1 | FASHN 人体解析（商用路径注入 stub，权重不下载） |
-| onnxruntime-gpu | 1.23.2 | DWPose ONNX 推理（CUDA provider） |
-| numpy | 1.26.4 | GPU 服务器降级（scipy 1.11 兼容） |
+ | rembg | ≥2.0.50 | 主体掩膜（U2Net）。仅 GPU 环境需要；`foreground_mask` 失败时 fail-closed 回退纯颜色压白（手臂/胸口不被误啃） |
+ | fashn-human-parser | 0.1.1 | FASHN 人体解析（商用路径注入 stub，权重不下载） |
+ | onnxruntime-gpu | 1.23.2 | DWPose ONNX 推理（CUDA provider） |
+ | numpy | 1.26.4 | GPU 服务器降级（scipy 1.11 兼容）。**注意**：rembg 的 `pymatting` 依赖链拉 `numba` 要求 numpy≤1.24，与 1.26.4 冲突；GPU 无卡环境可不装 rembg（`foreground_mask` 自动 fail-closed 回退） |
 
 ### 主前端 (vanilla-JS SPA, 端口 5173)
 
@@ -176,11 +185,12 @@ GPU 环境额外（`requirements.txt` 注释段，按部署环境启用）：
 
 ### 模型权重
 
-| 权重 | 来源 | 大小 | 许可证 |
-|------|------|------|--------|
-| FASHN VTON v1.5 | fashn-vton-1.5/ (git submodule) | ~1.9GB | Apache 2.0 |
-| FASHN DWPose | FASHN 仓库内置 | ~200MB | Apache 2.0 |
-| FASHN YOLOX | FASHN 仓库内置 | ~50MB | Apache 2.0 |
+ | 权重 | 来源 | 大小 | 许可证 |
+ |------|------|------|--------|
+ | FASHN VTON v1.5 | tar 同步到 `models/fashn/`（GitHub 不可达时手动 rsync） | ~1.9GB | Apache 2.0 |
+ | FASHN DWPose | FASHN 仓库内置 | ~200MB | Apache 2.0 |
+ | FASHN YOLOX | FASHN 仓库内置 | ~50MB | Apache 2.0 |
+ | U2Net | `models/seg/u2net.onnx` | ~176MB | Apache 2.0 |
 | SDXL 1.0 | stabilityai/stable-diffusion-xl-base-1.0 | ~6.5GB | Open RAIL++-M |
 | SDXL LoRA (rank 16) | 自训（120 张） | ~200MB | — |
 | ControlNet (OpenPose/Canny/Depth) | lllyasviel/ControlNet | ~2.5GB | Open RAIL++-M |
@@ -268,34 +278,50 @@ export STORE_ADMIN_PASSWORD="your-secure-password"
 export STORE_STAFF_PASSWORD="your-secure-password"
 ```
 
-## GPU 部署（4090 D 商用模式）
+ ## GPU 部署（4090 D 商用模式）
 
-```bash
-# 1. 同步代码 + 模型
-git clone https://github.com/647133036/IDM-VTON-Builder.git
-cd IDM-VTON-Builder
-bash scripts/download_sdxl_weights.sh
+ ```bash
+ # 1. 同步代码 + 模型
+ git clone https://github.com/647133036/IDM-VTON-Builder.git
+ cd IDM-VTON-Builder
+ bash scripts/download_sdxl_weights.sh
+ # FASHN 权重手动同步到 models/fashn/ (GitHub 不可达时 tar/rsync 从可达机器搬运)
 
-# 2. Python 环境 (Miniconda 3.10)
-pip install -r backend/requirements.txt
-pip install "torch>=2.1.0" "diffusers>=0.27.0" "transformers>=4.40.0" "accelerate>=0.30.0" controlnet-aux rembg
-pip install fashn-human-parser onnxruntime-gpu
-# numpy 需降到 1.26.4 (scipy 1.11 兼容, requirements.txt 的 2.2.4 与 scipy 冲突)
+ # 2. Python 环境 (Miniconda 3.10)
+ pip install -r backend/requirements.txt
+ pip install "torch>=2.1.0" "diffusers>=0.27.0" "transformers>=4.40.0" "accelerate>=0.30.0" controlnet-aux
+ pip install fashn-human-parser onnxruntime-gpu
+ # 无卡环境可不装 rembg (其依赖链拉 numba 要求 numpy<=1.24, 与 1.26.4 冲突);
+ # 有 rembg 时前景掩膜可用, 无则 foreground_mask fail-closed 回退纯颜色压白。
+ # numpy 需降到 1.26.4 (scipy 1.11 兼容, requirements.txt 的 2.2.4 与 scipy 冲突)
 
-# 3. FASHN 源码 (editable install)
-# PYTHONPATH 需包含 fashn 源码: /path/to/fashn-vton-1.5/src
-# models 符号链接: ln -s /path/to/repo/models /path/to/parent/models
+ # 3. FASHN 源码 (editable install)
+ # PYTHONPATH 需包含 fashn 源码: /path/to/fashn-vton-1.5/src
+ # models 符号链接: ln -s /path/to/repo/models /path/to/parent/models
+ # u2net 模型放 repo/models/seg/u2net.onnx (~176MB), 免 rembg 自动下载
 
-# 4. 启动
-export LICENSE_MODE=commercial
-export FASHN_DIR=/path/to/repo/models/fashn
-export PYTHONPATH=/path/to/repo:/path/to/fashn-vton-1.5/src
-python -m uvicorn main:app --host 0.0.0.0 --port 8000
+ # 4. 启动 (start_gpu.sh)
+ export LICENSE_MODE=commercial
+ export FASHN_DIR=/path/to/repo/models/fashn
+ export PYTHONPATH=/path/to/repo:/path/to/fashn-vton-1.5/src
+ export LD_LIBRARY_PATH=/usr/local/cuda/lib64
+ export GPU_PARALLELISM=3        # 扩散推理并发, 默认 3 (BoundedSemaphore)
+ export WORKERS=3                # worker 数, 默认 max(WORKERS, GPU_PARALLELISM)
+ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 
-# 5. 验证
-curl http://localhost:8000/api/license
-# → fashn_available: true, engine: fashn-vton, commercial_compliant: true
-```
+ # 5. 验证
+ curl http://localhost:8000/api/license
+ # → fashn_available: true, engine: fashn-vton, commercial_compliant: true
+ ```
+
+ **VRAM 基准**（4090 D 24GB，`scripts/gpu/vram_probe.py` 实测）：
+
+ | 并发数 | 峰值 VRAM | 占比 | 3 任务 wall time |
+ |--------|-----------|------|------------------|
+ | 3      | 4.5GB     | 19%  | 12.9s（probe，单张 30 步） |
+ | 3      | 5.7GB     | 24%  | 179s（完整 job 含 prewhiten/POSTFX） |
+
+ 模型权重为共享单例（`_get_fashn_pipe()`），3 任务共享 ~5GB 权重，仅激活缓冲随并发线性增长，实际峰值远低于 3×单任务。
 
 ## 运行条件
 
@@ -383,8 +409,10 @@ LICENSE_MODE=commercial
 | `VTON_PROVIDER_MODEL` | 空 | 覆盖 aidge model 名；model 名进幂等键 |
 | `VTON_POSTFX` | `1` | `1`=POSTFX 全链路；`0`=RAW 直出档 |
 | `VTON_FASHN_LOCAL_COST_CENT` | `5` | 本地 GPU 摊薄参考价（分/张） |
-| `VTON_PIPELINE_VERSION` | `0.2.1` | 幂等键组成项 |
-| `HTTP_402_IS_FATAL` | `true` | 402 直落失败并熔断 |
+ | `VTON_PIPELINE_VERSION` | `0.2.1` | 幂等键组成项 |
+ | `HTTP_402_IS_FATAL` | `true` | 402 直落失败并熔断 |
+ | `GPU_PARALLELISM` | `3` | 扩散推理并发上限（`BoundedSemaphore`）；OOM 自动 `empty_cache` 重试 |
+ | `WORKERS` | `4` | worker 线程数；实际取 `max(WORKERS, GPU_PARALLELISM)` |
 
 ### 必须现在钉死（6 参数）
 
@@ -397,10 +425,11 @@ LICENSE_MODE=commercial
 | `POSTFX_HIST_ANCHOR` / `BAND_GAIN` / `BAND_MAX` | `true` / `0.30` / `0.55` | 印花贴回锚定参数 |
 | `HTTP_402_IS_FATAL` | `true` | 402 不重试，直接熔断 |
 
-## 图片规格
+ ## 图片规格
 
-- **上传**：PNG / JPEG / WEBP，最大 20MB，任意尺寸
-- **输出**：长边 2048px，白底 JPEG 或透明 PNG，宽高比跟随底座图
+ - **上传**：PNG / JPEG / WEBP，最大 20MB，任意尺寸
+ - **服装参考图**：必须是**平铺（flat-lay）衣服图**，**不是**模特穿着图。FASHN 引擎按平铺几何处理；喂穿着图会把模特身体误判为衣服一部分，导致肩膀/手臂被啃掉（视觉验收缺陷根因）
+ - **输出**：长边 2048px，白底 JPEG 或透明 PNG，宽高比跟随底座图
 
 ## 测试
 
@@ -448,7 +477,7 @@ POST /api/reviews:batch
 - 角色权限：admin 全操作，staff 仅创建和查看；凭据脱敏
 - SSRF 防护：`/api/push` 强制 https + `.myshopify.com`，拒绝内网
 - XSS 防护：前端 `escapeHtml` 转义；服务端枚举白名单校验
-- GPU 并发：扩散推理全局 `threading.Lock` 串行化；批量事务性写盘
+ - GPU 并发：扩散推理 `BoundedSemaphore(GPU_PARALLELISM, 默认 3)` 限并发；OOM 自动 `empty_cache` 重试；批量事务性写盘
 
 ## 授权说明
 
@@ -475,9 +504,10 @@ POST /api/reviews:batch
 
 ## 历史版本
 
-| 版本 | 要点 |
-|------|------|
-| v0.2.1 | 五条换衣管线注册；百炼+VIAPI 同源 aidge 换 model 名；RAW 交付档；GzmDesign 海报排版台；L3 编排层 6 端点；平台合规组件 |
+ | 版本 | 要点 |
+ |------|------|
+ | v0.2.2 | GPU 3 并发（`BoundedSemaphore`，OOM 自动重试）；`ssim` 兼容 skimage≥0.21（`data_range=1.0`）；移除 IDM-VTON submodule；明确服装参考图须为平铺图 |
+ | v0.2.1 | 五条换衣管线注册；百炼+VIAPI 同源 aidge 换 model 名；RAW 交付档；GzmDesign 海报排版台；L3 编排层 6 端点；平台合规组件 |
 | v0.2.0 | Provider 层：生成源可插拔 + 幂等缓存 + 成本记账 + prio 队列 |
 | v0.1.9 | 印花保真管线（FASHN 商用路径）：AI 只画衣服，图案确定性贴回，print_fidelity 实测 1.0 |
 | v0.1.8 | RTMPose-m 关键点检测；腰线插值；dress 脖子排除 + 膝部截断 |
