@@ -23,3 +23,16 @@ public/tryon_preview/
 models/
 training/dataset/
 training/output/
+
+# debug/review artifacts
+gpu_smoke_*/
+test_images/
+r12_review/
+r13_review/
+r14_review/
+depth_result_preview.png
+ms_quality_*.png
+ms_sdxl_test.png
+ms_space_smoke.png
+old_result_preview.jpg
+test_v017_cpu.py
