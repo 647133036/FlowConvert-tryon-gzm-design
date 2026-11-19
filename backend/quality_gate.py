@@ -32,7 +32,7 @@ def ssim_score(ref_roi: Image.Image, out_roi: Image.Image) -> float:
     try:
         from skimage.metrics import structural_similarity as ssim
 
-        score = float(ssim(ref, out, channel_axis=2))
+        score = float(ssim(ref, out, channel_axis=2, data_range=1.0))
         return max(0.0, min(1.0, score))
     except ImportError:
         return _fallback_ssim(ref, out)
