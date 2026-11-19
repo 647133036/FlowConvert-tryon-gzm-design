@@ -5,7 +5,7 @@ export default defineConfig(({ mode }) => {
   const e = loadEnv(mode, process.cwd())
   return {
     server: {
-      port: 5173,
+      port: 5174,
       allowedHosts: ['.monkeycode-ai.online'],
       proxy: {
         // 普通 REST

@@ -1087,7 +1087,7 @@ def download(job_id: str, _: dict = Depends(current_user)):
 def api_poster_render(body: dict, _: dict = Depends(current_user)):
     import base64
 
-    from backend.poster import poster_meta, render_poster_from_json
+    from poster import poster_meta, render_poster_from_json
 
     meta = poster_meta(body)
     png_bytes = render_poster_from_json(body)
