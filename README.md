@@ -2,153 +2,237 @@
 
 店铺后台固定底图换衣工作台。选一张模特底图，批量拖入服装平铺图，队列生成正面成品，下载或推送到商品页。界面内置中英文一键切换。
 
-**基本运行条件：8 核 CPU / 32GB 内存 / NVIDIA A10（24GB 显存）。** 商用主引擎 FASHN VTON v1.5（像素空间）按此规格验证；无 GPU 时自动降级合成引擎，或配 AIDGE_API_KEY 走云端 Provider（纯 CPU 机器可出商用图）。
+**基本运行条件：8 核 CPU / 32GB 内存 / NVIDIA 4090 D（24GB 显存）。** 商用主引擎 FASHN VTON v1.5（像素空间）按此规格验证；无 GPU 时自动降级合成引擎，或配 `AIDGE_API_KEY` 走云端 Provider（纯 CPU 机器可出商用图）。
 
-## 五条电商换衣管线
+> **本项目商用需联系作者。**
 
-生成源统一在 `tryon_provider.py` 注册表登记，**模型是耗材，路由是资产**——换引擎不动业务表/审核台/成本曲线，只加一个 Provider 实现 + 一行注册 + 一条价格表。
+---
+
+## 详细架构
+
+### 分层总览
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│ L4  出图 / 交付层                                                       │
+│   GzmDesign 海报排版台 (gzm-design/, Vite:5174, LeaferJS 2D 画布)       │
+│   Pillow 纯 CPU 2x PNG 渲染 (backend/poster.py)                        │
+│   平台合规组件 (backend/compliance.py, 5 平台声明式规则, CPU 原语)      │
+│   推送适配器 (backend/push.py: Shopify / WordPress / 其他打标)          │
+│   CSV 批量导出 (backend/export_csv.py)                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│ L3  编排层 (backend/ai_bindings.py + 6 个 L2 HTTP/SSE 端点)             │
+│   幂等键 (内容指纹 + 参数 + pipeline_ver + seed_ns, 命中 0 元秒回)      │
+│   成本预估/记账 (7 角色 × 6 Provider 费率表)                            │
+│   SSE 事件流 (/api/jobs/{id}/events, 15s 心跳, 四层无缓冲)             │
+│   操作 (/api/jobs/{id}:act — cancel / reroll / reroute)                 │
+│   批次导出 (/api/batches/{id}:export)                                   │
+│   批量审核 (/api/reviews:batch)                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│ L2  引擎层 (5 条换衣管线, 统一注册表 backend/tryon_provider.py)        │
+│   ① FASHN VTON v1.5  (商用主引擎, 本地 GPU)                             │
+│   ② SDXL Inpaint     (本地扩散兜底, ControlNet + IP-Adapter)           │
+│   ③ 阿里云百炼 AiTryOn (同步 API, aidge 端点)                          │
+│   ④ 阿里云视觉智能 VIAPI (按次调用, 同源 aidge)                        │
+│   ⑤ 第三方 API        (预留钩子, 实现 Provider 即插即用)               │
+│   路由: VTON_PROVIDER=auto → 云端不可用自动回落 FASHN → 失败 → SDXL    │
+│   → 合成引擎兜底                                                       │
+├─────────────────────────────────────────────────────────────────────────┤
+│ L1  模型 / 权重层                                                       │
+│   FASHN 1.5.0 (Apache 2.0, 像素空间, segmentation_free=True)           │
+│   DWPose / YOLOX (Apache 2.0, FASHN 人体/姿态解析)                    │
+│   SDXL + ControlNet + IP-Adapter (商用合规)                            │
+│   RTMPose-m (关键点检测, Apache 2.0)                                   │
+│   fashn-human-parser (NVIDIA License, 商用路径注入 stub, 权重不下载)  │
+├─────────────────────────────────────────────────────────────────────────┤
+│ L0  基础设施                                                            │
+│   合成引擎 (CPU, backend/engine.py, 无 GPU 兜底)                        │
+│   印花保真管线 (backend/preserve_refit.py, 确定性贴回, fidelity=1.0)   │
+│   质检分档 (backend/quality_gate.py, SSIM/OCR/print_fidelity)          │
+│   平台规格化 (backend/platform_presets.py, 裁切/压缩/品类检测)         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 换衣管线全流程（商用模式）
+
+```
+POST /api/tryon
+  → L3 编排层: 幂等键命中? 命中 → 0 元秒回 cache_hit=true
+  → L2 引擎层: VTON_PROVIDER 路由
+      ├─ FASHN VTON v1.5 (GPU, 像素空间, segmentation_free)
+      │    ├─ VTON_POSTFX=1: 全链路印花贴回
+      │    │    ├─ refit_cloth_to_drawn_garment  (VTON_REFIT_ENGINE: grid/tps/optical_flow)
+      │    │    ├─ match_ref_tone                (全局色调, 采样避开鬼影/印花)
+      │    │    ├─ ghost_print_mask              (笔画语义鬼影检测, 非凸包)
+      │    │    ├─ ghost_inpaint_pass            (局部修补 + Telea 色锚)
+      │    │    ├─ ghost_strict_residual         (territory 限定残余 + 逐像素最近净布料复核)
+      │    │    ├─ anchor_ref_local              (局部环形锚定, 逐行 ±24 窗口环布料中位)
+      │    │    └─ blend_core_ref_tone           (核心场混合, 笔触取原图, 布料取锚定版, 软边羽化)
+      │    └─ VTON_POSTFX=0: RAW 直出档
+      │         ├─ 跳过全 POSTFX + 印花核心直贴
+      │         ├─ CPU Lanczos 等比放大到 SKU 像素下限 (只放大不缩小)
+      │         └─ delivery_tier=review → 人工视觉验收采用后才推 PROD
+      │
+      └─ 任一引擎失败 → 下一级兜底 (SDXL Inpaint → 合成引擎)
+  → L3 质检: print_fidelity / SSIM / OCR → delivery_tier (auto / review)
+  → L4 出图: 长边 2048px, 白底 JPEG 或透明 PNG
+  → SSE 推送进度 → 前端图层回写 → 审核台
+```
+
+### 五条电商换衣管线注册表
 
 | 管线 | 形态 | 价格量级 | 适配品类 | 备注 |
 | --- | --- | --- | --- | --- |
 | FASHN VTON v1.5 | 本地 pixel-space 生成 + 确定性印花贴回 | `VTON_FASHN_LOCAL_COST_CENT`（默认 5 分，GPU 摊薄） | 全品类；复杂图案/特殊版型翻车率偏高 | 商用主引擎，POSTFX 全链路或 RAW 直出两档 |
 | SDXL Inpaint | 本地扩散兜底（对齐 + ControlNet + IP-Adapter） | 0（GPU 摊薄已含 fashn_local） | 全品类 | FASHN 失败时兜底 |
 | 阿里云百炼 AiTryOn | 同步 API（model_image + garment_image + category） | 0.2 / 0.5 元/张（各 400 张免费），`AIDGE_COST_CENT` 可覆盖 | 连衣裙、套装较稳；上衣易扒裤子 | 配 API Key 即用；`category` 必须显式传 |
-| 阿里云视觉智能 VIAPI | 按次调用，独立于百炼入口 | 按次，与百炼同源，`VIAPI_COST_CENT` 可覆盖 | 同上 | 适合已有阿里云账号、走视觉智能产品线 |
-| 第三方 API | 预留接入位（Provider 钩子，§08 生成源无感） | 自定义 | 自定义 | 登记占位，实现一个 Provider 钩子即插即用 |
+| 阿里云视觉智能 VIAPI | 按次调用，独立于百炼入口 | 按次，与百炼同源，`VIAPI_COST_CENT` 可覆盖 | 同上 | 适合已有阿里云账号 |
+| 第三方 API | 预留接入位（Provider 钩子） | 自定义 | 自定义 | 实现一个 Provider 钩子即插即用 |
 
-路由与降级：
+### GzmDesign 海报排版台
 
-- `VTON_PROVIDER` 选 `auto` / `fashn_local` / `aidge`（百炼）/ `viapi` / `third_party`。百炼 与 VIAPI 同源 aidge 端点（换 model 名 `aitryon` / `aitryon-plus` / `aitryon-refiner`），`VTON_PROVIDER_MODEL` 可覆盖 model 名。
-- 任一云端 Provider 不可用（无 Key / 无公网 URL / 熔断中）→ 自动回落本地 FASHN；FASHN 失败 → SDXL 兜底；SDXL 失败 → 合成引擎兜底。降级原因落 job `engine_degraded` / `degraded_reason`。
-- 5 管线在 `engine_status` 顶层 `pipelines` 键暴露，前端（GzmDesign AiPanel.vue）可枚举。
+独立子项目 `gzm-design/`（Vite SPA, 端口 5174），与主 SPA（端口 5173）通过 6 个 L2 端点桥接：
 
-## 交付档位（POSTFX 全链路 vs RAW 直出）
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/api/poster/render` | POST | Pillow 纯 CPU 2x PNG 渲染 |
+| `/api/jobs/estimate` | POST | 成本预估 |
+| `/api/jobs/{id}/events` | GET (SSE) | 任务事件流（15s 心跳，四层无缓冲） |
+| `/api/jobs/{id}:act` | POST | cancel / reroll / reroute |
+| `/api/batches/{id}:export` | POST | 批次导出 |
+| `/api/reviews:batch` | POST | 批量审核 |
 
-生成后的印花保真回贴（protect/refit/anchor/ghost/inpaint/reapply/blend）对部分 SKU 是净负（露肩结构变异 / 印花放大扭曲 / 边缘拖影），由环境变量切档：
+SSE 四层无缓冲：Vite `configure` 关 proxy buffer + Nginx `proxy_buffering off` + `chunked_transfer_encoding off` + CDN 透传。
 
-- `VTON_POSTFX=1`（默认）：POSTFX 全链路，确定性印花保真贴回，输出放大到 `output_long_side`（默认 2048）。
-- `VTON_POSTFX=0`：RAW 直出档——跳过全 POSTFX 与印花核心直贴，只做 CPU Lanczos 等比放大到 SKU 像素下限（只放大不缩小，满足电扇分辨率要求），不做 GPU/重绘。
+### 多店铺与推送
 
-档位走质检分档 `delivery_tier`（`auto` / `review`）：RAW 档无印花保真分可度量，一律 `review` 人工视觉验收采用后才推 PROD。编排链：
+- 每店铺独立 embed 嵌入链接（`/embed.html?store=STORE_ID`）
+- CSV/SKU 批量推送：`/api/jobs/export-csv` 导出 ZIP → `/api/stores/{id}/batch-push` 上传
+- 单张推送（admin）：Shopify Admin API / WordPress REST + WooCommerce / 其他平台仅打标
+- 替换图优先于原成品，SKU 回退链：CSV 行 sku > 店铺 default_sku > 空
 
+---
+
+## 依赖版本
+
+### 后端 (Python 3.10+)
+
+| 包 | 版本 | 用途 |
+|----|------|------|
+| fastapi | 0.115.6 | HTTP API 框架 |
+| uvicorn | 0.34.0 | ASGI 服务器 |
+| python-multipart | 0.0.20 | 表单/文件上传解析 |
+| pillow | 11.1.0 | 图像处理（合成引擎 / 海报渲染 / 印花贴回） |
+| numpy | 2.2.4 | 数值计算（跨机一致性：沙箱 2.4.6 vs GPU 服务器 1.26.4） |
+| pyjwt | 2.10.1 | JWT 认证 |
+| aiofiles | 24.1.0 | 异步文件 I/O |
+| requests | 2.32.3 | HTTP 客户端（百炼 / VIAPI / 推送） |
+| opencv-python-headless | ≥4.9.0 | 合成引擎 2D 变形（纯 CPU） |
+
+GPU 环境额外（`requirements.txt` 注释段，按部署环境启用）：
+
+| 包 | 版本 | 备注 |
+|----|------|------|
+| torch | ≥2.1.0 | CUDA 构建（4090 D 实测 2.13.0+cu130） |
+| diffusers | ≥0.27.0 | SDXL 管线（实测 0.40.0） |
+| transformers | ≥4.40.0 | 模型加载 |
+| accelerate | ≥0.30.0 | CPU offload |
+| controlnet-aux | ≥0.0.7 | ControlNet 条件注入 |
+| rembg | ≥2.0.50 | 主体掩膜（U2Net） |
+| fashn-human-parser | 0.1.1 | FASHN 人体解析（商用路径注入 stub，权重不下载） |
+| onnxruntime-gpu | 1.23.2 | DWPose ONNX 推理（CUDA provider） |
+| numpy | 1.26.4 | GPU 服务器降级（scipy 1.11 兼容） |
+
+### 主前端 (vanilla-JS SPA, 端口 5173)
+
+| 包 | 版本 | 用途 |
+|----|------|------|
+| vite | ^5.4.10 | 构建工具 + 开发服务器 |
+| vitest | ^2.1.8 | 前端测试 |
+
+入口 `src/main.js`（~1575 行），`src/i18n.js`（~456 行，中英双语），Poster tab 调 6 个 L2 端点。
+
+### GzmDesign 排版台 (Vue 3 + Vite, 端口 5174)
+
+| 包 | 版本 | 用途 |
+|----|------|------|
+| leafer-ui | ^2.3.3 | 2D 画布引擎（图层 / 拖拽 / 撤销栈） |
+| vue | ^3.4.0 | 框架（工具链已装，入口仍为 vanilla-JS） |
+| pinia | ^2.1.7 | 状态管理（已装，未接入组件树） |
+| @arco-design/web-vue | ^2.46.0 | UI 组件库（已装，未接入） |
+| @vitejs/plugin-vue | ^5.0.0 | Vite Vue 插件 |
+| typescript | ^5.4.0 | 类型检查（vue-tsc） |
+| @leafer-ui/node | (render.ts) | 服务端 2x PNG 渲染 |
+| @napi-rs/canvas | (render.ts) | 字体注册 + Canvas 节点 |
+| sharp | (render.ts) | 图片输出编码 |
+
+### 模型权重
+
+| 权重 | 来源 | 大小 | 许可证 |
+|------|------|------|--------|
+| FASHN VTON v1.5 | fashn-vton-1.5/ (git submodule) | ~1.9GB | Apache 2.0 |
+| FASHN DWPose | FASHN 仓库内置 | ~200MB | Apache 2.0 |
+| FASHN YOLOX | FASHN 仓库内置 | ~50MB | Apache 2.0 |
+| SDXL 1.0 | stabilityai/stable-diffusion-xl-base-1.0 | ~6.5GB | Open RAIL++-M |
+| SDXL LoRA (rank 16) | 自训（120 张） | ~200MB | — |
+| ControlNet (OpenPose/Canny/Depth) | lllyasviel/ControlNet | ~2.5GB | Open RAIL++-M |
+| IP-Adapter | tencent-ailab/IP-Adapter | ~300MB | Apache 2.0 |
+| RTMPose-m | open-mmlab/mmpose | ~200MB | Apache 2.0 |
+| fashn-human-parser (SegFormer) | NVIDIA | 不下载 | NVIDIA License (商用禁止) |
+
+### 目录结构
+
+```text
+backend/
+  main.py              FastAPI 入口 (~1100 行), 全部 L2 端点
+  worker.py            异步 worker (343 行), job 队列 + 引擎调度
+  engine.py            合成引擎 (1362 行, CPU 兜底) + 引擎路由 + engine_status
+  engine_fashn.py      FASHN VTON v1.5 (611 行, 商用主引擎 + 印花保真 + RAW 档)
+  engine_sdxl.py       SDXL Inpaint (1739 行, 兜底引擎)
+  tryon_provider.py    5 管线注册表 + 路由 + 幂等 + 成本记账 (418 行)
+  tryon_provider_v2.py Provider v2 扩展
+  ai_bindings.py       L3 编排层 (270 行, 7 角色 / 视觉哈希 / 幂等键 / 费率表)
+  compliance.py        平台合规 (316 行, 5 平台声明式规则, CPU 原语)
+  poster.py            海报渲染 (147 行, Pillow 纯 CPU 2x PNG)
+  postfx_anchor.py     POSTFX 锚定扩展
+  person_picker.py     人物选择器
+  preserve_refit.py    印花保真管线 (1402 行, 贴回核心)
+  prewhiten.py         预去白
+  quality_gate.py      质检 (SSIM / OCR / print_fidelity / delivery_tier)
+  platform_presets.py  平台规格化 + 品类检测 + 关键点
+  push.py              推送适配器 (Shopify / WordPress / 其他)
+  export_csv.py        CSV 批量导出
+  lora_io.py           LoRA 加载 (PEFT 优先)
+  store.py             店铺管理
+  auth.py              JWT 认证
+  tests/               pytest (20+ 测试文件, 506 passed / 2 skipped)
+  migrations/
+    0001_core_tables.sql
+    0002_person_seed_ns.sql
+
+src/                   主前端 vanilla-JS SPA
+  main.js              入口 (~1575 行, 含 Poster tab + 6 端点调用)
+  i18n.js              中英双语 (~456 行, 25 poster.* key)
+  style.css
+
+gzm-design/            海报排版台 (Vue 工具链 + LeaferJS)
+  src/main.js          LeaferJS 画布 + 4 个 bug fix + 内联 AI 面板
+  src/ai/AiPanel.vue  右键 AI 菜单 + 成本确认 + 角色保护
+  src/ai/useGenerate.ts SSE subscribe + submitJob + estimateJob
+  src/types/layerMeta.ts AiMeta + Symbol.for('gzm.aiMeta') + PROTECTED_ROLES
+  server/render.ts     @leafer-ui/node + sharp + GlobalFonts (2x PNG/WebP)
+
+training/              SDXL LoRA / ControlNet 训练脚本
+models/                模型权重 (FASHN / SDXL / RTMPose / LoRA)
+deploy/
+  nginx-gzm-design.conf  Nginx 配置 (SSE 无缓冲 / 上传 / 字体 MIME)
+scripts/
+  gpu/                 GPU 冒烟测试 (combo.py / run_r6.py 等)
+  run_tryon_batch.py   批量出图
+  download_sdxl_weights.sh
 ```
-GzmDesign AiPanel.vue 调 /api/tryon
-  → 编排层幂等（seed_ns + pipeline_ver，命中 0 元秒回）
-  → FASHN(raw) 或 POSTFX 全链路
-  → CPU Lanczos 放大到 SKU 像素下限
-  → REVIEW 状态回写图层
-  → 运营点"采用"才落 PROD
-```
 
-RAW 档跑时省约一半（r15 GPU 实测 31.8s vs POSTFX 全链路 64.9s）。
-
-## v0.2.1 更新日志：五条换衣管线注册 + RAW 交付档 + 百炼/VIAPI model 名路由
-
-- **五条电商换衣管线**统一进 `tryon_provider.py` 注册表：FASHN（本地）/ SDXL / 阿里云百炼 AiTryOn / 视觉智能 VIAPI / 第三方预留位。`engine_status` 顶层 `pipelines` 键暴露，前端可枚举。
-- **百炼 + VIAPI 同源 aidge 端点换 model 名**（`aitryon` / `aitryon-plus` / `aitryon-refiner`）：`VTON_PROVIDER` 选 `aidge` / `viapi` / `third_party` 均映射 aidge 端点，`VTON_PROVIDER_MODEL` 可覆盖 model 名；model 名进幂等键（换模型=换出图，缓存失效）。价格表加 `VIAPI_COST_CENT`。
-- **RAW 交付档（`VTON_POSTFX=0`）**：跳过净负的 POSTFX 全链路 + 印花核心直贴，只做 CPU Lanczos 等比放大到 SKU 像素下限（只放大不缩小），走 `delivery_tier=review` 人工视觉验收采用才推 PROD。worker 把 `postfx` 档位落库。
-- 第三方接入位：`PROVIDER_PIPELINE["third_party"]` 登记占位，按 §08 生成源无感原则实现一个 Provider 钩子即插即用。
-- 全量测试 474 passed / 2 skipped（新增 5 管线 / RAW 放大 / model 名路由 / 第三方预留位等用例）。
-
-## v0.2.0 更新日志：Provider 层（生成源可插拔 + 幂等缓存 + 成本记账）
-
-按开工设计稿（`.monkeycode/specs/ai-tryon-platform/开工设计稿.html`）落地编排层第一块：**模型是耗材，路由是资产**——换引擎不动业务。
-
-- `backend/tryon_provider.py`：Provider 注册表 + 路由（`fashn_local` / `aidge`，`fashn_api`/`leap`/`volc` 注册未实现给原因）；幂等键（内容指纹 + 生成参数 + pipeline_version，不含 provider/时间戳）；402 熔断 / 429 Retry-After / 5xx 2^n 退避；价格表 env 可覆盖。
-- **Aidge（阿里 AiTryOn API）Provider**：纯 CPU 机器配 `AIDGE_API_KEY` + `AIDGE_PUBLIC_BASE_URL` 即可出商用图，与本地 FASHN 共用同一条 POSTFX 回贴链；签名结果 URL 立即落盘。
-- **幂等缓存**：同人同衣同参数重复提交（队列重投/双击）直接复用成图，`cache_hit=true`、0 元秒回。
-- **成本记账**：job 落 `provider` / `cost_est_cent` / `cost_cent` / `cache_hit`；本地摊薄价与 aidge 单价均 env 可调。
-- **prio 队列**：job 支持 `prio` 0/1/2（交互/批量/后处理），交互任务不被批量饿死。
-- 全量测试 466 passed（新增 Provider 层 16 例 + worker 幂等/队列 2 例：幂等键组成/熔断/退避/缓存命中/prio）。
-
-## v0.1.9 更新日志：印花保真管线（FASHN 商用路径）
-
-### 问题定义
-
-生成式换衣有一个天然矛盾：AI 负责把衣服"穿"上模特（褶皱、光影、垂坠感），但 SKU 平铺图上的 logo / 印花 / 文字一旦交给生成模型重画，字形必然漂移——电商场景里印花就是商品本身，错一笔就是详情页事故。
-
-v0.1.9 的解法：**AI 只画衣服，图案确定性贴回。** FASHN VTON v1.5（Apache 2.0，像素空间，`segmentation_free=True`）生成整体上身效果后，印花区域从 SKU 参考图经几何 refit + 色调锚定后像素级贴回，`print_fidelity` 实测保持 1.0000。
-
-### 贴回管线（engine_fashn.py + preserve_refit.py）
-
-```
-FASHN 生成
-  └─ refit_cloth_to_drawn_garment   平铺图案 warp 缩放对齐到生成衣服区
-       （VTON_REFIT_ENGINE = grid / tps / optical_flow）
-  └─ match_ref_tone                 全局色调匹配（采样避开鬼影/印花笔画）
-  └─ ghost_print_mask               鬼影检测（笔画语义，非凸包——
-                                    袖区 30k px 布料不再被误贴平）
-  └─ ghost_inpaint_pass             局部修补优先 + Telea 色锚：
-                                    Telea 填充实测会白化（填充 240,234,219
-                                    vs 净布料 203,181,116），逐像素向最近
-                                    净布料平移局部色偏
-  └─ ghost_strict_residual          territory 限定残余检测 + 逐像素最近
-                                    净布料色复核（无 stroke_mask 时检测区
-                                    排除自身，防自证）
-  └─ anchor_ref_local               残余兜底 + 核心场贴回的局部环形锚定：
-                                    全局色调按整件布料中位（含深色下摆 57-96）
-                                    匹配，贴回区落在亮胸口（185-195）时会拍出
-                                    深色矩形（"像贴上去的/整体下移/衣领断层"）；
-                                    改为逐行 ±24 行窗口环布料中位，行分段
-                                    加性平移，两个方向（亮贴暗/暗贴亮）收敛
-  └─ blend_core_ref_tone            核心场混合：笔触取自原始参考（保真），
-                                    布料底取锚定版，亮度 smoothstep 软边 +
-                                    1px 羽化（笔触 AA 环亮度 109→181，ref 218）
-  └─ quality_gate.print_fidelity_score  印花保真分（贴回区灰度 NCC 映射）
-```
-
-最近净布料色（`_nearest_fabric_color`）为纯 numpy 两阶段 Voronoi 传播：先 5x1 横向核（布料明暗沿行渐变，实测右袖 B 通道 159@y620→125@y920；多行核的 max 膨胀会把上方更亮布料逐行复合进来），再 3x3 等方核收尾竖洞。
-
-### GPU 实测（RTX 4090 D，r12/r13 轮）
-
-| 指标 | 旧管线 | 新管线 | 参考 |
-|------|--------|--------|------|
-| 袖口残留带亮度 | 224（残留白笔画）/ 84（贴平） | 182 | gen 袖料底 183 |
-| 猴头区误伤 | 180→123（暗化） | 180→157 | 无改动 192 |
-| 核心场布料底 | 107（深色矩形） | 178 | gen 胸口 185-195 |
-| 袖褶高频相关 | 0.058 | 0.967 | 1.0 |
-| 笔触 AA 环 | 109（暗圈） | 181 | ref 218 |
-| print_fidelity | — | 1.0000 | 1.0 |
-| 场外严格残影 | 24486 px（gen 本身） | 256 px | →0 |
-
-肩部掩膜补全（`shoulder_complete_mask`）经 GPU 验证为正确 no-op（当前 SKU 无啃肩行），RTMPose 在 GPU 环境正常（肩点 conf 1.0）。
-
-### 跨机环境实测（沙箱 vs GPU 服务器）
-
-- 沙箱 cv2 5.0.0 非真 OpenCV：`DIST_LABEL_PIXEL` 标签恒 0；`resize` 压掉单通道维。GPU 服务器 cv2 4.8.0 为真实现。跨机语义一致的图像原语一律纯 numpy 实现。
-- 沙箱 numpy 2.4.6 广播不前导补维（仅右对齐）：`(h,1)` 源对 `(h,w,3)` 会行列转置；服务器 numpy 1.23.5 的 `np.linalg.solve` 在良态 TPS 矩阵上返回垃圾（`tps_warp` 已带残差守卫 + lstsq 换道重试，r6-r8 fidelity 卡 0.85 平台的根因）。
-
-### 质检与多 seed
-
-- `delivery_tier`：SSIM（0.70）/ OCR（0.80）/ print_fidelity 分 `auto` / `review` 档
-- `VTON_MULTI_SEED`（默认 3）：worker 按 quality_gate 择优，print_fidelity 跨 seed 可比
-- 三引擎（FASHN / SDXL / 合成）统一写 `result.info.print_fidelity + delivery_tier`
-
-## 换衣管线全流程
-
-按电商换衣的五个阶段组织（商用模式）：
-
-| 阶段 | 实现 |
-|------|------|
-| 1. 衣服抠底 | `garment_alpha` / `detect_garment_extent`：SKU 平铺图出衣服区域、袖长/衣长、品类推断 |
-| 2. 模特抠底 | 生成结果上出 `keep_mask`（模特身上衣服区）+ RTMPose 肩点 + `shoulder_complete_mask`；反选区保护原模特像素 |
-| 3. 衣服重绘在模特上 | FASHN VTON v1.5 生成整体上身效果（唯一的 AI 重绘步骤；SDXL Inpaint / 合成引擎兜底） |
-| 4. 图案缩放贴合 | **确定性贴回，不交给生成模型**：refit warp 缩放 → 色调匹配/局部环形锚定 → 鬼影擦除 → 核心场贴印（花纹/文字/纽扣/袖口/领口原样贴回）→ AA 羽化 |
-| 5. 电商规格 | 质检分档 + 多 seed 择优 + 2048px 白底输出；平台规格化处理（裁切模板/压缩规范）在路线图上 |
-
-## 功能
-
-- 女装 / 男装 / 女童 / 男童 / 婴幼儿正面底座，可随时替换或上传自家模特
-- 批量拖入几十到上百张服装图，只出正面，长边 2048px，白底 JPEG 或透明 PNG
-- 印花保真：logo / 文字 / 图案像素级贴回，`print_fidelity` 实测 1.0
-- 已上传图片形成可复用图片库，支持服饰分类管理与批量调整分类
-- 底座分类（受众 / 年龄带 / 人种）可管理、可批量调整；人种标签可自定义（默认 10 个地理区域），换衣引擎按底座人种修正体型
-- 多店铺管理：每店铺独立 embed 嵌入链接 + CSV/SKU 批量推送
-- 真实推送：Shopify Admin API 上传商品图，WordPress REST 媒体 + WooCommerce 商品关联
-- 成品大图预览弹窗，左右对照原图与成品
-- 界面中英文一键切换，语言偏好本地持久化
-- 三条引擎体系：FASHN VTON v1.5（商用主引擎，POSTFX 全链路 / RAW 直出两档）/ SDXL Inpaint（兜底）/ 合成引擎（无 GPU 兜底）；研究模式仍可用 IDM-VTON（需授权）
-- 五条换衣管线（生成源可插拔）：FASHN / SDXL / 阿里云百炼 AiTryOn / 视觉智能 VIAPI / 第三方预留位；云端 Provider 共用同一条 POSTFX 回贴链，不可用自动降级
+---
 
 ## 快速启动（无 GPU）
 
@@ -158,7 +242,12 @@ pip3 install --break-system-packages -r backend/requirements.txt
 cd backend
 python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
 
-# 前端
+# 主前端
+npm install
+npm run dev
+
+# GzmDesign 排版台 (可选)
+cd gzm-design
 npm install
 npm run dev
 ```
@@ -171,40 +260,54 @@ export STORE_ADMIN_PASSWORD="your-secure-password"
 export STORE_STAFF_PASSWORD="your-secure-password"
 ```
 
+## GPU 部署（4090 D 商用模式）
+
+```bash
+# 1. 同步代码 + 模型
+git clone https://github.com/647133036/IDM-VTON-Builder.git
+cd IDM-VTON-Builder
+git submodule update --init --recursive --depth 1
+bash scripts/download_sdxl_weights.sh
+
+# 2. Python 环境 (Miniconda 3.10)
+pip install -r backend/requirements.txt
+pip install "torch>=2.1.0" "diffusers>=0.27.0" "transformers>=4.40.0" "accelerate>=0.30.0" controlnet-aux rembg
+pip install fashn-human-parser onnxruntime-gpu
+# numpy 需降到 1.26.4 (scipy 1.11 兼容, requirements.txt 的 2.2.4 与 scipy 冲突)
+
+# 3. FASHN 源码 (editable install)
+# PYTHONPATH 需包含 fashn 源码: /path/to/fashn-vton-1.5/src
+# models 符号链接: ln -s /path/to/repo/models /path/to/parent/models
+
+# 4. 启动
+export LICENSE_MODE=commercial
+export FASHN_DIR=/path/to/repo/models/fashn
+export PYTHONPATH=/path/to/repo:/path/to/fashn-vton-1.5/src
+python -m uvicorn main:app --host 0.0.0.0 --port 8000
+
+# 5. 验证
+curl http://localhost:8000/api/license
+# → fashn_available: true, engine: fashn-vton, commercial_compliant: true
+```
+
 ## 运行条件
 
 | 项目 | 规格 |
 |------|------|
 | CPU | 8 核 |
 | 内存 | 32GB |
-| GPU | NVIDIA A10（24GB 显存） |
+| GPU | NVIDIA RTX 4090 D（24GB 显存） |
 | 系统 | Linux，CUDA 驱动与 PyTorch 匹配 |
+| 铸脸 (Qwen-Image-Edit-2511) | Q4 量化 ≈12G，无法与 FASHN (≈8G) 同卡共存；独立 `gpu_cast` 队列，夜间跑 |
 
-GPU 实测环境（2026-11）：RTX 4090 D 24GB / Driver 580.76.05 / CUDA 13.0 / Miniconda Python 3.10（torch 2.13.0+cu130，diffusers 0.40.0，numpy 1.23.5，opencv 4.8.0）。SDXL 路径 `enable_model_cpu_offload` + VAE fp32 解码；训练 LoRA 按 A10 23GB 验证（约 11 分钟 / 800 步）。复现入口 `scripts/gpu/`（`combo.py` / `run_r6.py` 等）与 `scripts/run_tryon_batch.py`。
-
-## GPU 部署（商用模式）
-
-```bash
-git clone https://github.com/647133036/IDM-VTON-Builder.git
-cd IDM-VTON-Builder
-git submodule update --init --recursive --depth 1
-bash scripts/download_sdxl_weights.sh
-cd backend
-pip install -r requirements.txt
-pip install "torch>=2.1.0" "diffusers>=0.27.0" "transformers>=4.40.0" "accelerate>=0.30.0" controlnet-aux rembg
-export LICENSE_MODE=commercial
-export STORE_JWT_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
-export STORE_ADMIN_PASSWORD="your-secure-password"
-python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
-curl http://localhost:8000/api/license
-```
+GPU 实测环境（2026-11）：RTX 4090 D 24GB / Driver 580.76.05 / CUDA 13.0 / Miniconda Python 3.10（torch 2.13.0+cu130，diffusers 0.40.0，numpy 1.26.4，opencv 4.8.0）。
 
 ## 引擎选择
 
 | LICENSE_MODE | 引擎优先级 | 商用合规 |
 |---|---|---|
-| `commercial` | FASHN VTON v1.5 -> SDXL Inpaint -> 合成引擎（云端：百炼 / VIAPI 经 `VTON_PROVIDER` 路由，不可用自动回落本地） | 合规 |
-| `research` | IDM-VTON -> 合成引擎 | 不合规 |
+| `commercial` | FASHN VTON v1.5 → SDXL Inpaint → 合成引擎（云端：百炼 / VIAPI 经 `VTON_PROVIDER` 路由，不可用自动回落本地） | 合规 |
+| `research` | IDM-VTON → 合成引擎 | 不合规 |
 | 未设置 | 合成引擎 | 需确认 |
 
 ## SDXL 训练
@@ -216,27 +319,9 @@ MODEL=controlnet bash run_train.sh   # ControlNet
 MODEL=lora_family bash run_train.sh  # 服装 + 人像双 LoRA
 ```
 
-训练基线（v0.1.3+）：`bfloat16`（Ampere+ GPU）、双格式保存（PEFT + diffusers）、`time_ids` / `letterbox_rgb` 保宽高比、VAE fp32、min-SNR gamma=5.0。
-
-## 多店铺与推送
-
-### CSV/SKU 批量推送
-
-- 任务队列页导出 CSV+图：POST `/api/jobs/export-csv` 下载 ZIP
-- 店铺卡片批量推送：上传 CSV/ZIP，POST `/api/stores/{id}/batch-push`
-- 替换图优先于原成品，SKU 回退链：CSV 行 sku > 店铺 default_sku > 空
-
-### 单张推送
-
-完成的任务勾选店铺推送（admin 权限）：Shopify Admin API / WordPress REST 媒体 + WooCommerce 关联 / 其他平台仅打标。
-
-### 嵌入
-
-```html
-<iframe src="/embed.html?store=STORE_ID" style="width:100%;min-height:720px;border:0"></iframe>
-```
-
 ## 环境变量
+
+### 基础
 
 ```bash
 STORE_JWT_SECRET=<至少 32 字节>
@@ -254,7 +339,7 @@ LICENSE_MODE=commercial
 | `VTON_WARP_VERTICAL` | `1.0` | 垂直锚点对齐强度 |
 | `VTON_DETAIL` | `1` | 商品细节回贴（边缘衰减；肤色区降权） |
 | `VTON_PATTERN_LOCK` | `1` | DualFit 贴图 + 频率分离 |
-| `VTON_PATTERN_LOCK_LIGHT_STRENGTH` | `1.0` | 光照总闸：0=纯贴图，1=全效 |
+| `VTON_PATTERN_LOCK_LIGHT_STRENGTH` | `1.0` | 光照总闸 |
 | `VTON_PATTERN_LOCK_LF_STRENGTH` | `1.0` | 底色光照响应系数 |
 | `VTON_PATTERN_LOCK_HF_STRENGTH` | `0.5` | 花纹光照响应系数 |
 | `VTON_PATTERN_LOCK_LF_BLUR_SIGMA` | `8.0` | 低频提取高斯 sigma |
@@ -272,82 +357,58 @@ LICENSE_MODE=commercial
 | `VTON_MULTI_SEED` | `3` | 多 seed 择优（上限 8） |
 | `VTON_REFIT_ENGINE` | `grid` | 贴回几何引擎 grid/tps/optical_flow |
 | `VTON_INPAINT_REPAIR` | `0` | 设 `1` 且有权重时启用 SDXL Inpainting 二次修复 |
-| `RTMPOSE_FAKE_DEPS` | `1` | 注入空壳 xtcocotools/mmdet/mmcv.ops；真实依赖已装时设 `0` |
-
-FASHN 印花保真管线默认开启（`engine_fashn.py` 内建，无开关；鬼影/残余/核心场各阶段独立 try/except 降级，任一失败保留生成像素）。
+| `RTMPOSE_FAKE_DEPS` | `1` | 注入空壳 xtcocotools/mmdet/mmcv.ops |
 
 ### Provider 层（v0.2.0 起，v0.2.1 扩为 5 管线）
 
-生成源可插拔：本地 FASHN / SDXL / 阿里云百炼 AiTryOn / 视觉智能 VIAPI / 第三方预留位共 5 条管线，百炼与 VIAPI 同源 aidge 端点换 model 名，共用同一条 POSTFX 回贴链。设计稿见 `.monkeycode/specs/ai-tryon-platform/开工设计稿.html`。
-
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `VTON_PROVIDER` | `auto` | 生成源路由：`auto` / `fashn_local` / `sdxl` / `aidge`（百炼）/ `viapi` / `third_party`；云端不可用自动回落 fashn_local |
-| `AIDGE_API_KEY` | 空 | Aidge API Key（可配 `DASHSCOPE_API_KEY`）；未配则 aidge 不可用，自动回落本地 |
-| `AIDGE_PUBLIC_BASE_URL` | 空 | 本服务的公网基地址（Aidge 经公网 URL 拉取模特/服装图）；纯内网部署留空即本地 |
+| `VTON_PROVIDER` | `auto` | 生成源路由：`auto` / `fashn_local` / `sdxl` / `aidge` / `viapi` / `third_party` |
+| `AIDGE_API_KEY` | 空 | Aidge API Key（可配 `DASHSCOPE_API_KEY`） |
+| `AIDGE_PUBLIC_BASE_URL` | 空 | 本服务公网基地址（Aidge 经公网 URL 拉取图片） |
 | `AIDGE_ENDPOINT` | `https://aidge.aliyuncs.com` | Aidge API 端点 |
 | `AIDGE_API_VERSION` | `2026-04-28` | `x-acs-version` 头 |
-| `AIDGE_COST_CENT` | `15` | 百炼 aidge 单张参考价（分，仅记账） |
-| `VIAPI_COST_CENT` | `15` | VIAPI 单张参考价（分，仅记账，与百炼同源） |
+| `AIDGE_COST_CENT` | `15` | 百炼 aidge 单张参考价（分） |
+| `VIAPI_COST_CENT` | `15` | VIAPI 单张参考价（分） |
 | `AIDGE_TIMEOUT` | `120` | 请求超时秒 |
 | `AIDGE_MAX_RETRIES` | `3` | 5xx/超时/429 重试上限 |
-| `AIDGE_BREAKER_SECONDS` | `1800` | 402 熔断窗口（没钱≠抖动，绝不重试） |
-| `VTON_PROVIDER_MODEL` | 空 | 覆盖 aidge model 名（百炼 aitryon 系 / VIAPI 换模型）；model 名进幂等键 |
-| `VTON_POSTFX` | `1` | `1`=POSTFX 全链路印花贴回；`0`=RAW 直出档（跳全 POSTFX，CPU Lanczos 放大到 SKU 像素下限，走 review 人工验收） |
-| `VTON_FASHN_LOCAL_COST_CENT` | `5` | 本地 GPU 摊薄参考价（分/张，仅记账） |
-| `VTON_PIPELINE_VERSION` | `0.2.1` | 幂等键组成项；发版自动灰度失效旧缓存 |
+| `AIDGE_BREAKER_SECONDS` | `1800` | 402 熔断窗口 |
+| `VTON_PROVIDER_MODEL` | 空 | 覆盖 aidge model 名；model 名进幂等键 |
+| `VTON_POSTFX` | `1` | `1`=POSTFX 全链路；`0`=RAW 直出档 |
+| `VTON_FASHN_LOCAL_COST_CENT` | `5` | 本地 GPU 摊薄参考价（分/张） |
+| `VTON_PIPELINE_VERSION` | `0.2.1` | 幂等键组成项 |
+| `HTTP_402_IS_FATAL` | `true` | 402 直落失败并熔断 |
 
-行为要点：
+### 必须现在钉死（6 参数）
 
-- **幂等**：`idem_key = sha256(底图内容|服装内容|参数|mode|seed|pipeline_version)`；同人同衣同参数重复提交直接复用上一张成图（job 字段 `cache_hit=true`、`cost_cent=0`）。键不含 provider 与时间戳。
-- **熔断/退避**：402 直落失败并熔断 30 分钟；429 读 `Retry-After`；5xx/超时按 2^n 退避重试（≤3 次）。
-- **成本记账**：job 落 `provider` / `cost_est_cent`（提交时估）/ `cost_cent`（实扣）/ `cache_hit` 字段。
-- **队列优先级**：job 支持 `prio`（0=交互、1=批量、2=后处理），交互任务不被批量饿死。
-- **Aidge 出图约束**：两边 256–2049px 自动适配；签名结果 URL 立即下载落盘（不存 URL）。
-- `/api/engine` 的 `providers` 块暴露路由/价格/可用性。
+| 参数 | 值 | 说明 |
+|------|----|------|
+| `worker_prefetch_multiplier` | `1` | 配合 `--pool=solo --concurrency=1` |
+| 幂等键组成 | `SEED_NS + PIPELINE_VER` | 双入键，换模型/发版自动灰度失效旧缓存 |
+| `Platform.image.crossOrigin` | `'anonymous'` | + OSS CORS，防 Canvas 污染 |
+| `?v=${assetVer}` | 每资源 | 缓存击穿 |
+| `POSTFX_HIST_ANCHOR` / `BAND_GAIN` / `BAND_MAX` | `true` / `0.30` / `0.55` | 印花贴回锚定参数 |
+| `HTTP_402_IS_FATAL` | `true` | 402 不重试，直接熔断 |
 
 ## 图片规格
 
-**上传**：PNG / JPEG / WEBP，最大 20MB，任意尺寸
-
-**输出**：长边 2048px，白底 JPEG 或透明 PNG，宽高比跟随底座图
+- **上传**：PNG / JPEG / WEBP，最大 20MB，任意尺寸
+- **输出**：长边 2048px，白底 JPEG 或透明 PNG，宽高比跟随底座图
 
 ## 测试
 
 ```bash
-# 后端（474 passed / 2 skipped）
+# 后端 (506 passed / 2 skipped)
 cd backend
 python3 -m pytest tests/ -q
 
-# 前端（vanilla-JS SPA）
+# 前端
 npm test
 npm run build
 
 # 静态检查
 ruff check backend/ training/
 ruff format --check backend/ training/
-```
-
-覆盖：单元（引擎/人种/CRUD/JWT/推送/worker/LoRA/并发/训练几何）、平台适配（clothing_mask / blend_tryon / reapply / detect_garment_extent / 肤色 / 接缝 inpaint / pose 关键点 / dress 遮罩）、印花保真（preserve_refit 71 用例：TPS 残差守卫 / 鬼影擦除 / 残余兜底 / 局部环形锚定 / 行分段 delta / 同行布料取样 / blend 软边 / fidelity）、组件（i18n/render）、集成（全 API 链路）、系统（真实 worker 出图）。
-
-## 目录结构
-
-```text
-backend/
-  engine.py                合成引擎（CPU 兜底）+ 引擎路由 + engine_status（5 管线登记）
-  engine_fashn.py          FASHN VTON v1.5 商用主引擎（parser stub + segmentation_free + 印花保真贴回 + RAW 直出档 VTON_POSTFX=0）
-  engine_sdxl.py           SDXL Inpaint 兜底引擎（对齐 + ControlNet + IP-Adapter + 动态遮罩 + 图案锁 + 接缝/肤色后处理）
-  preserve_refit.py        印花保真管线（refit warp / 色调匹配 / 鬼影检测擦除 / 残余兜底 / 局部环形锚定 / 核心场混合）
-  quality_gate.py          质检（SSIM / OCR / print_fidelity / delivery_tier）
-  tryon_provider.py        生成源 Provider 层（5 管线注册 + 路由 + 幂等键 + 成本记账 + 百炼/VIAPI model 名 + 第三方预留位）
-  platform_presets.py      店规 + detect_garment_extent + clothing_mask + blend_tryon + reapply / pattern_lock + seam/skin + RTMPose/MediaPipe 关键点检测
-  export_csv.py            CSV/SKU 批量导出
-  lora_io.py               LoRA 加载（PEFT 优先）
-  tests/                   pytest（474 passed / 2 skipped）
-src/                       前端 SPA + i18n
-training/                  SDXL LoRA / ControlNet 训练脚本
-models/sdxl/lora/          LoRA 权重（120 张训练，rank 16）
-models/rtmpose/            RTMPose-m checkpoint（需手动下载）
 ```
 
 ## API 概览
@@ -362,23 +423,29 @@ POST /api/jobs/{id}/push                    # [admin]
 GET  /api/jobs  /api/jobs/{id}  /api/download/{id}
 GET|POST /api/uploads  /api/uploads/categories
 GET  /api/health  /api/license
+
+# L3 编排层 (6 端点, GzmDesign AiPanel 调用)
+POST /api/poster/render
+POST /api/jobs/estimate
+GET  /api/jobs/{id}/events                   # SSE, 15s 心跳
+POST /api/jobs/{id}:act                     # cancel / reroll / reroute
+POST /api/batches/{id}:export
+POST /api/reviews:batch
 ```
 
 ## 安全
 
-本项目经过两轮安全审查：
-
-- 文件服务鉴权：`/files/{path}` 仅暴露白名单目录，仅允许图片后缀；上传路径正则白名单校验，拒绝路径穿越
-- 图片内容验证：PIL 解码校验，仅接受 PNG/JPEG/WEBP，最大 20MB
+- 文件服务鉴权：`/files/{path}` 仅白名单目录 + 图片后缀；上传路径正则白名单，拒绝路径穿越
+- 图片内容验证：PIL 解码，仅 PNG/JPEG/WEBP，最大 20MB
 - JWT 密钥无硬编码默认值；账号密码未设置时随机生成并持久化（chmod 600）
-- 角色权限：admin 全操作，staff 仅创建任务和查看；凭据脱敏（`/api/stores` 不返回明文 api_key）
-- SSRF 防护：`/api/push` 强制 https + `.myshopify.com`，拒绝内网地址
+- 角色权限：admin 全操作，staff 仅创建和查看；凭据脱敏
+- SSRF 防护：`/api/push` 强制 https + `.myshopify.com`，拒绝内网
 - XSS 防护：前端 `escapeHtml` 转义；服务端枚举白名单校验
-- GPU 并发：扩散推理路径全局 `threading.Lock` 串行化；SDXL 管线缓存常驻；批量事务性（先全量校验再统一写盘）
-
-已知限制：DNS 重绑定（TOCTOU）未完全消除；无 GPU 环境下合成引擎为启发式近似；去水印为浅色角部 best-effort。
+- GPU 并发：扩散推理全局 `threading.Lock` 串行化；批量事务性写盘
 
 ## 授权说明
+
+> **本项目商用需联系作者。**
 
 | 组件 | 许可证 | 商用 | 本项目使用方式 |
 |------|--------|------|----------------|
@@ -393,30 +460,27 @@ GET  /api/health  /api/license
 | Rembg (U2Net) | MIT | 允许 | 主体掩膜提取 |
 | MediaPipe | Apache 2.0 | 允许 | 关键点检测回退 |
 | PLTON 论文方法 | 学术公开 | 思路可借鉴 | LF/HF 频率分离的 CPU 后处理实现，未使用其代码或权重 |
-| 本项目核心代码 | 商用权归作者所有 | 允许 | 换衣管线、印花保真、平台适配、后处理、训练脚本等全部自研代码 |
-
-**商用部署**：设 `LICENSE_MODE=commercial`，引擎优先级 FASHN VTON v1.5 → SDXL Inpaint → 合成引擎，不加载 IDM-VTON。FASHN 主模型与 DWPose / YOLOX 权重为 Apache 2.0；fashn-human-parser（NVIDIA SegFormer）含商用限制，商用路径注入零张量 stub、权重永不下载。作者已获得 SDXL / ControlNet 商用授权，IP-Adapter / RTMPose / Rembg / MediaPipe 均为商用合规许可，可安全用于商业场景。
+| 本项目核心代码 | **商用权归作者所有** | **需联系作者** | 换衣管线、印花保真、平台适配、后处理、训练脚本等全部自研代码 |
 
 ## 历史版本
 
 | 版本 | 要点 |
 |------|------|
-| v0.2.1 | 五条换衣管线注册（FASHN/SDXL/百炼/VIAPI/第三方预留位）；百炼+VIAPI 同源 aidge 换 model 名；RAW 交付档（`VTON_POSTFX=0`，CPU Lanczos 放大到 SKU 像素下限，走 review） |
-| v0.2.0 | Provider 层：生成源可插拔（fashn_local/aidge）+ 幂等缓存 + 成本记账 + prio 队列 |
+| v0.2.1 | 五条换衣管线注册；百炼+VIAPI 同源 aidge 换 model 名；RAW 交付档；GzmDesign 海报排版台；L3 编排层 6 端点；平台合规组件 |
+| v0.2.0 | Provider 层：生成源可插拔 + 幂等缓存 + 成本记账 + prio 队列 |
 | v0.1.9 | 印花保真管线（FASHN 商用路径）：AI 只画衣服，图案确定性贴回，print_fidelity 实测 1.0 |
-| v0.1.8 | RTMPose-m 关键点检测替代 MediaPipe（侧/背面退化 13.7%→2.2%）；腰线 shoulder→hip 插值（0.544）；dress 脖子排除 + 膝部截断 |
-| v0.1.7 | warp 垂直锚点对齐（logo 偏位修正）；GARMENT_BOX 品类垂直范围；肤色校正排除脸区；inpaint 修复聚焦遮罩 + 管线单例 |
-| v0.1.6 | 频率分离 pattern lock（PLTON 思路）：底色全强度响应光照、花纹半强度——立体感与图案保真同时成立 |
-| v0.1.5 | 换衣后遗症图像修复：胸口白块 / 手臂变白 / 上衣齐腰 / 图案被重画（见 `git log`） |
-| v0.1.4 | Canny 按品类 / IP-Adapter 0.9 / detect_garment_extent / SeamlessClone 贴回 |
+| v0.1.8 | RTMPose-m 关键点检测；腰线插值；dress 脖子排除 + 膝部截断 |
+| v0.1.7 | warp 垂直锚点对齐；GARMENT_BOX 品类垂直范围；inpaint 修复聚焦遮罩 |
+| v0.1.6 | 频率分离 pattern lock（PLTON 思路） |
+| v0.1.5 | 换衣后遗症图像修复 |
+| v0.1.4 | Canny 按品类 / IP-Adapter 0.9 / detect_garment_extent |
 | v0.1.3 | 「AI 出骨架光影，代码保商品细节」混合策略 + LoRA 训练基线 |
 
 ## 感谢
 
 - [FASHN](https://fashn.ai) — VTON v1.5 商用主引擎（像素空间，Apache 2.0）
-- [IDM-VTON](https://github.com/yisol/IDM-VTON)（ECCV 2024）— garment warp 思路借鉴（未用其权重）
-- [RTMPose](https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose)（arXiv:2306.06029）— COCO 17 关键点腰线插值 / 膝部截断 / 肩部掩膜
-- [PLTON](https://arxiv.org/abs/2401.11239) — LF/HF 频率分离思想（CPU 后处理实现）
-- [Stable Diffusion XL](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0) / [ControlNet](https://github.com/lllyasviel/ControlNet) / [IP-Adapter](https://github.com/tencent-ailab/IP-Adapter) — 商用管线生成底座与条件注入
-- [Rembg](https://github.com/danielgatis/rembg) — 主体掩膜（U2Net）
-- [MediaPipe Pose](https://github.com/google-ai/mediapipe) — 关键点检测回退
+- [IDM-VTON](https://github.com/yisol/IDM-VTON)（ECCV 2024）— garment warp 思路借鉴
+- [RTMPose](https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose) — COCO 17 关键点
+- [PLTON](https://arxiv.org/abs/2401.11239) — LF/HF 频率分离思想
+- [Stable Diffusion XL](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0) / [ControlNet](https://github.com/lllyasviel/ControlNet) / [IP-Adapter](https://github.com/tencent-ailab/IP-Adapter)
+- [Rembg](https://github.com/danielgatis/rembg) / [MediaPipe Pose](https://github.com/google-ai/mediapipe)
