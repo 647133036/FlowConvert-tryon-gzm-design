@@ -1,0 +1,1134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>电商 AI 试衣出图台 · 开工设计稿 v1.0</title>
+<style>
+:root{
+  --bg:#0b0e14; --bg2:#11151f; --card:#151a26; --card2:#1a2030;
+  --line:#232b3d; --line2:#2e3850;
+  --tx:#e6ebf5; --tx2:#9aa7c0; --tx3:#66738f;
+  --cy:#3ddc97; --bl:#4aa8ff; --pu:#a78bfa; --am:#ffb84d; --rd:#ff6b81; --pi:#ff7ab8;
+  --mono:"JetBrains Mono","SF Mono",Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--tx);font-family:var(--sans);font-size:14.5px;line-height:1.75;
+  background-image:radial-gradient(900px 500px at 12% -8%,rgba(61,220,151,.10),transparent 60%),
+                   radial-gradient(800px 500px at 88% 0%,rgba(74,168,255,.09),transparent 60%);
+  background-attachment:fixed}
+.wrap{max-width:1400px;margin:0 auto;padding:0 28px 100px}
+
+/* ── Header ── */
+header{padding:44px 0 26px;border-bottom:1px solid var(--line);margin-bottom:0}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.22em;color:var(--cy);text-transform:uppercase}
+h1{font-size:31px;line-height:1.3;margin:10px 0 12px;letter-spacing:-.4px;font-weight:700}
+h1 em{font-style:normal;background:linear-gradient(92deg,var(--cy),var(--bl) 55%,var(--pu));-webkit-background-clip:text;background-clip:text;color:transparent}
+.sub{color:var(--tx2);max-width:940px;font-size:14.5px}
+.sub b{color:var(--tx)}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.tag{font-family:var(--mono);font-size:11px;padding:4px 10px;border:1px solid var(--line2);border-radius:99px;color:var(--tx2);background:var(--bg2)}
+.tag.ok{border-color:rgba(61,220,151,.4);color:var(--cy)}
+.tag.warn{border-color:rgba(255,184,77,.4);color:var(--am)}
+
+/* ── Nav ── */
+nav{position:sticky;top:0;z-index:50;background:rgba(11,14,20,.86);backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line);margin-bottom:34px}
+nav .inner{max-width:1400px;margin:0 auto;padding:0 28px;display:flex;gap:2px;overflow-x:auto}
+nav a{padding:13px 15px;font-size:13px;color:var(--tx2);text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;transition:.16s}
+nav a:hover{color:var(--tx);background:rgba(255,255,255,.03)}
+nav a.on{color:var(--cy);border-bottom-color:var(--cy)}
+nav a i{font-family:var(--mono);font-style:normal;font-size:10.5px;color:var(--tx3);margin-right:7px}
+
+/* ── Section ── */
+section{margin-bottom:64px;scroll-margin-top:70px}
+h2{font-size:21px;margin-bottom:6px;display:flex;align-items:center;gap:11px;letter-spacing:-.2px}
+h2 .n{font-family:var(--mono);font-size:11px;color:var(--cy);border:1px solid rgba(61,220,151,.35);
+  padding:3px 8px;border-radius:5px;background:rgba(61,220,151,.07);font-weight:400}
+h2+.lead{color:var(--tx2);margin-bottom:22px;max-width:1000px}
+h3{font-size:16px;margin:30px 0 12px;color:var(--tx);display:flex;align-items:center;gap:9px}
+h3::before{content:"";width:3px;height:15px;background:var(--cy);border-radius:2px}
+h4{font-size:13.5px;color:var(--tx2);margin:18px 0 8px;font-family:var(--mono);letter-spacing:.04em}
+
+/* ── Cards / Grid ── */
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(2,1fr)}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:1080px){.g3,.g4{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:720px){.g2,.g3,.g4{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:17px 19px;transition:.18s;position:relative}
+.card:hover{border-color:var(--line2);background:var(--card2);transform:translateY(-1px)}
+.card h5{font-size:14px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.card p{color:var(--tx2);font-size:13.3px}
+.card .k{font-family:var(--mono);font-size:10.5px;color:var(--tx3);letter-spacing:.1em;text-transform:uppercase}
+.dot{width:7px;height:7px;border-radius:50%;flex:none}
+.d-cy{background:var(--cy);box-shadow:0 0 9px var(--cy)}
+.d-bl{background:var(--bl);box-shadow:0 0 9px var(--bl)}
+.d-pu{background:var(--pu);box-shadow:0 0 9px var(--pu)}
+.d-am{background:var(--am);box-shadow:0 0 9px var(--am)}
+.d-rd{background:var(--rd);box-shadow:0 0 9px var(--rd)}
+
+/* ── Code ── */
+details{border:1px solid var(--line);border-radius:10px;background:#0d111a;margin:14px 0;overflow:hidden}
+details[open]{border-color:var(--line2)}
+summary{padding:11px 16px;cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--tx2);
+  list-style:none;display:flex;align-items:center;gap:9px;user-select:none}
+summary::-webkit-details-marker{display:none}
+summary::before{content:"▸";color:var(--cy);font-size:10px;transition:.15s}
+details[open] summary::before{transform:rotate(90deg)}
+summary:hover{color:var(--tx);background:rgba(255,255,255,.025)}
+summary .fp{margin-left:auto;color:var(--tx3);font-size:10.5px}
+pre{padding:16px 18px 18px;overflow-x:auto;font-family:var(--mono);font-size:12.3px;line-height:1.72;
+  color:#c9d4e8;border-top:1px solid var(--line);background:#0a0d14}
+pre::-webkit-scrollbar{height:9px;width:9px}
+pre::-webkit-scrollbar-thumb{background:var(--line2);border-radius:5px}
+.cm{color:#5f6f8f}.kw{color:#c792ea}.st{color:#a5e6a5}.fn{color:#82aaff}.nm{color:#f7b955}
+.ty{color:#4aa8ff}.op{color:#3ddc97}.er{color:#ff6b81}.pu{color:#a78bfa}
+
+/* inline code */
+:not(pre)>code{font-family:var(--mono);font-size:12.2px;background:rgba(74,168,255,.1);color:#9fd0ff;
+  padding:1.5px 6px;border-radius:4px;border:1px solid rgba(74,168,255,.16)}
+
+/* ── Table ── */
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:10px;margin:14px 0}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:760px}
+th{background:var(--bg2);text-align:left;padding:10px 13px;font-family:var(--mono);font-size:11px;
+  letter-spacing:.08em;color:var(--tx2);border-bottom:1px solid var(--line2);text-transform:uppercase;white-space:nowrap}
+td{padding:10px 13px;border-bottom:1px solid rgba(35,43,61,.7);color:var(--tx2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+tbody tr:hover{background:rgba(255,255,255,.022)}
+td b,td strong{color:var(--tx)}
+td code{font-size:11.6px}
+.yes{color:var(--cy);font-weight:600}.no{color:var(--rd);font-weight:600}.mid{color:var(--am);font-weight:600}
+
+/* ── Architecture layers ── */
+.stack{display:flex;flex-direction:column;gap:10px;margin:18px 0}
+.layer{border:1px solid var(--line);border-radius:11px;padding:15px 18px;background:var(--card);
+  display:grid;grid-template-columns:150px 1fr;gap:18px;align-items:center;transition:.18s;position:relative;overflow:hidden}
+.layer:hover{border-color:var(--line2);transform:translateX(3px)}
+.layer::after{content:"";position:absolute;left:0;top:0;bottom:0;width:3px}
+.layer.l1::after{background:var(--cy)}.layer.l2::after{background:var(--am)}.layer.l3::after{background:var(--pu)}
+.layer .who{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--tx3);text-transform:uppercase}
+.layer .who b{display:block;font-family:var(--sans);font-size:15px;color:var(--tx);letter-spacing:0;margin-top:3px}
+.layer .what{color:var(--tx2);font-size:13.2px}
+.layer .what span{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:5px;
+  background:rgba(255,255,255,.05);border:1px solid var(--line2);margin:3px 5px 3px 0;color:var(--tx2)}
+.layer .price{font-family:var(--mono);font-size:11.5px;text-align:right;white-space:nowrap}
+.free{color:var(--cy)}.cost{color:var(--am)}.ours{color:var(--pu)}
+.arrow{text-align:center;color:var(--tx3);font-size:11px;font-family:var(--mono);letter-spacing:.3em;margin:-3px 0}
+
+/* ── State machine ── */
+.sm{display:flex;flex-wrap:wrap;gap:9px;align-items:center;padding:20px;background:#0d111a;border:1px solid var(--line);border-radius:11px}
+.nd{font-family:var(--mono);font-size:11.5px;padding:7px 12px;border-radius:7px;border:1px solid var(--line2);
+  background:var(--bg2);color:var(--tx2);white-space:nowrap;transition:.15s;position:relative}
+.nd:hover{border-color:var(--cy);color:var(--tx);box-shadow:0 0 0 3px rgba(61,220,151,.09)}
+.nd b{display:block;font-family:var(--sans);font-size:12.5px;color:var(--tx);font-weight:600}
+.nd small{font-size:10px;color:var(--tx3)}
+.nd.s0{border-color:rgba(102,115,143,.5)}
+.nd.s1{border-color:rgba(74,168,255,.45);background:rgba(74,168,255,.07)}
+.nd.s2{border-color:rgba(167,139,250,.45);background:rgba(167,139,250,.07)}
+.nd.s3{border-color:rgba(255,184,77,.45);background:rgba(255,184,77,.08)}
+.nd.s4{border-color:rgba(255,122,184,.45);background:rgba(255,122,184,.07)}
+.nd.s5{border-color:rgba(61,220,151,.5);background:rgba(61,220,151,.09)}
+.nd.s6{border-color:rgba(255,107,129,.45);background:rgba(255,107,129,.07)}
+.tr{color:var(--tx3);font-family:var(--mono);font-size:13px}
+.tr b{color:var(--cy);font-size:10.5px;display:block;text-align:center;letter-spacing:.05em}
+
+/* ── Callout ── */
+.note{border-left:3px solid var(--am);background:rgba(255,184,77,.06);padding:13px 17px;border-radius:0 9px 9px 0;margin:16px 0;font-size:13.4px;color:var(--tx2)}
+.note.b{border-color:var(--bl);background:rgba(74,168,255,.06)}
+.note.g{border-color:var(--rd);background:rgba(255,107,129,.06)}
+.note b{color:var(--tx)}
+.note .lb{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--am);display:block;margin-bottom:4px}
+.note.b .lb{color:var(--bl)}.note.g .lb{color:var(--rd)}
+
+/* ── Timeline ── */
+.tl{border-left:1px dashed var(--line2);padding-left:22px;margin-left:6px}
+.tl .it{position:relative;padding-bottom:18px}
+.tl .it::before{content:"";position:absolute;left:-27px;top:6px;width:9px;height:9px;border-radius:50%;
+  background:var(--cy);border:2px solid var(--bg);box-shadow:0 0 0 3px rgba(61,220,151,.12)}
+.tl .d{font-family:var(--mono);font-size:10.5px;color:var(--cy);letter-spacing:.1em}
+.tl .t{font-size:14px;color:var(--tx);margin:2px 0 3px}
+.tl .x{font-size:13px;color:var(--tx2)}
+.gate{display:inline-block;font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:4px;
+  background:rgba(255,107,129,.12);color:var(--rd);border:1px solid rgba(255,107,129,.3);margin-left:6px}
+
+/* ── File tree ── */
+.tree{font-family:var(--mono);font-size:12.2px;line-height:1.85;color:var(--tx2);background:#0d111a;
+  border:1px solid var(--line);border-radius:10px;padding:15px 18px;overflow-x:auto;white-space:pre}
+.tree .fd{color:var(--bl)}.tree .nw{color:var(--cy);font-weight:600}.tree .fx{color:var(--am)}
+.tree .cm{color:#5f6f8f}
+
+/* ── metric ── */
+.mtr{font-family:var(--mono);font-size:25px;color:var(--cy);line-height:1.2;letter-spacing:-.5px}
+.mtr small{font-size:11px;color:var(--tx3);display:block;font-family:var(--sans);letter-spacing:.05em;margin-top:2px}
+
+hr{border:none;border-top:1px solid var(--line);margin:44px 0}
+footer{border-top:1px solid var(--line);padding-top:22px;color:var(--tx3);font-size:12px;font-family:var(--mono);display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.pill{display:inline-block;font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:4px;margin-right:5px;
+  background:rgba(61,220,151,.1);color:var(--cy);border:1px solid rgba(61,220,151,.25)}
+.pill.a{background:rgba(255,184,77,.1);color:var(--am);border-color:rgba(255,184,77,.25)}
+.pill.p{background:rgba(167,139,250,.1);color:var(--pu);border-color:rgba(167,139,250,.25)}
+.pill.r{background:rgba(255,107,129,.1);color:var(--rd);border-color:rgba(255,107,129,.25)}
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <div class="eyebrow">Design Spec · Ready to Code · v1.0</div>
+  <h1>电商 AI 试衣出图台<br><em>5 处前端改造点 × 编排层数据契约</em></h1>
+  <p class="sub">
+    底座：<b>GzmDesign</b>（MIT，Vue3 + LeaferJS，管「排」）· 引擎：<b>FASHN VTON v1.5</b>（Apache-2.0，管「换」）·
+    本稿定义中间那层 <b>Orchestrator</b>——幂等、SKU 绑定、审核状态机、成本记账，以及前端要动的每一个文件。
+    <b>读完即可开 sprint，不需要再来一轮对齐会。</b>
+  </p>
+  <div class="meta">
+    <span class="tag ok">14 人日 · 1 FE + 1 BE · 2 周出内部版</span>
+    <span class="tag">目标吞吐 2000 张/日 · 单张 ≤ ¥0.05（自托管摊薄）</span>
+    <span class="tag">缓存命中目标 35%→55%</span>
+    <span class="tag warn">W1-D1 为翻车率闸门</span>
+    <span class="tag">生成日 2026-11-18</span>
+  </div>
+</header>
+
+<nav><div class="inner">
+  <a href="#s0" class="on"><i>00</i>分层契约</a>
+  <a href="#s1"><i>01</i>5 处前端改造</a>
+  <a href="#s2"><i>02</i>DDL 总览</a>
+  <a href="#s3"><i>03</i>幂等键</a>
+  <a href="#s4"><i>04</i>SKU 绑定</a>
+  <a href="#s5"><i>05</i>状态机</a>
+  <a href="#s6"><i>06</i>成本记账</a>
+  <a href="#s7"><i>07</i>Provider & 队列</a>
+  <a href="#s8"><i>08</i>POSTFX 回贴</a>
+  <a href="#s9"><i>09</i>API 契约</a>
+  <a href="#s10"><i>10</i>排期 & 验收</a>
+  <a href="#s11"><i>11</i>红线</a>
+</div></nav>
+
+<div class="wrap">
+
+<!-- ══════════ 00 ══════════ -->
+<section id="s0">
+  <h2><span class="n">00</span>分层契约：谁干什么，谁不许干什么</h2>
+  <p class="lead">先划边界，再写代码。三层之间只通过 <b>§09 的 6 个 HTTP/SSE 端点</b> 通信，前端永远拿不到模型 SDK，模型永远不知道有模板这回事。</p>
+
+  <div class="stack">
+    <div class="layer l1">
+      <div class="who">L1 · 排<b>GzmDesign 二开</b></div>
+      <div class="what">
+        <span>PSD/JSON 模板库</span><span>图层 role 语义</span><span>SKU⇄图层绑定</span>
+        <span>多平台画板 1:1 / 3:4 / 750×1000</span><span>价格·LOGO·二维码 图层</span><span>热区编辑</span><span>2x 导出</span>
+        <div style="margin-top:7px;color:var(--rd);font-size:12.4px">✋ 不许：直连模型、并发发请求、存业务状态</div>
+      </div>
+      <div class="price free">MIT ≈ ¥0<span style="color:var(--tx3)">改 30%</span></div>
+    </div>
+    <div class="arrow">▼ &nbsp;POST /api/jobs &nbsp;·&nbsp; SSE /api/jobs/{id}/events &nbsp;▼</div>
+
+    <div class="layer l2">
+      <div class="who">L2 · 编<b>Orchestrator ← 你的产品</b></div>
+      <div class="what">
+        <span>幂等键 + ON CONFLICT</span><span>三队列隔离</span><span>状态机 8 态</span>
+        <span>Provider 路由 & 熔断</span><span>缓存命中</span><span>成本记账</span><span>审核台</span><span>POSTFX 回贴</span><span>水印 & AIGC 标识</span>
+        <div style="margin-top:7px;color:var(--cy);font-size:12.4px">✔ 这层的表、命中率、路由权重 = 抄不走的部分</div>
+      </div>
+      <div class="price ours">≈14 人日<span style="color:var(--tx3)">一次性</span></div>
+    </div>
+    <div class="arrow">▼ &nbsp;submit / poll / cancel &nbsp;·&nbsp; caps 位掩码 &nbsp;▼</div>
+
+    <div class="layer l3">
+      <div class="who">L3 · 换<b>TryOn Provider 池</b></div>
+      <div class="what">
+        <span class="pill">fashn_local · 4090/5090 · ¥0.05</span>
+        <span class="pill a">fashn_api · $0.075/张 · 12/6/4s 三档</span>
+        <span class="pill a">leap · $0.105 · 失败不计费 · 链接 24h 失效</span>
+        <span class="pill p">aliyun OutfitAnyone · 唯一支持 local_swap</span>
+        <span class="pill p">volc 商品图3.0 · 换背景/场景裂变 ¥0.2</span>
+        <div style="margin-top:7px;color:var(--am);font-size:12.4px">⚠ 耗材，半年必换；CatVTON / IDM-VTON / OOTDiffusion <b>禁入</b>（NC 协议）</div>
+      </div>
+      <div class="price cost">¥0.05–0.21<span style="color:var(--tx3)">/张</span></div>
+    </div>
+  </div>
+
+  <div class="grid g4" style="margin-top:20px">
+    <div class="card"><div class="k">为什么必须分三层</div><h5><span class="dot d-cy"></span>v1.5 输出锁死 576×864</h5><p>它不出 3:4 主图、不吃 prompt、不加字。终稿只能在画布上合成——分层是物理约束，不是洁癖。</p></div>
+    <div class="card"><div class="k">为什么编排层值钱</div><h5><span class="dot d-pu"></span>模型是耗材，路由是资产</h5><p>换 v1.6 或别家 v2，业务表、审核台、成本曲线一行不动，只加一个 Provider 实现类。</p></div>
+    <div class="card"><div class="k">为什么省的是排版费</div><h5><span class="dot d-bl"></span>不是省那 6 秒生成</h5><p>改一版文案，模板动一次、600 SKU 跟着变，不用重跑模型。摄影费省在这。</p></div>
+    <div class="card"><div class="k">为什么要有 REVIEW</div><h5><span class="dot d-am"></span>图货一致 = 退货率</h5><p>胸口小 logo 重绘成乱码，模型自己不知道。人工 40 分钟/600 张，比客服便宜。</p></div>
+  </div>
+</section>
+
+<hr>
+
+<!-- ══════════ 01 ══════════ -->
+<section id="s1">
+  <h2><span class="n">01</span>五处前端改造点 · 精确到文件与工时</h2>
+  <p class="lead">基线：GzmDesign 主分支（Vue3 + Vite4 + Pinia + Arco Design + LeaferJS）。<b>全部新增代码放进 <code>src/ai/</code> 与 <code>src/stores/ai.ts</code>，对上游只做 4 处侵入式补丁</b>，方便日后 rebase 跟版本。</p>
+
+  <div class="tree">
+<span class="fd">src/</span>
+├── <span class="fd">ai/</span>                          <span class="cm"># ✦ 全部新增，零侵入</span>
+│   ├── <span class="nw">AiPanel.vue</span>              <span class="cm"># ① 右侧 AI 面板（选中图层上下文）</span>
+│   ├── <span class="nw">BatchDrawer.vue</span>           <span class="cm"># ④ SKU 批量投料 + 预估金额</span>
+│   ├── <span class="nw">ReviewBench.vue</span>           <span class="cm"># ⑤ 审核台（键盘流）</span>
+│   ├── <span class="nw">useGenerate.ts</span>            <span class="cm"># ③ SSE 订阅 + 图层热替换</span>
+│   ├── <span class="nw">layerMeta.ts</span>              <span class="cm"># ② role/sku/bbox 读写与迁移</span>
+│   ├── <span class="nw">hotspot.ts</span>                <span class="cm"># 热区图层 ⇄ PDP JSON</span>
+│   └── <span class="nw">api.ts</span>                    <span class="cm"># §09 契约的唯一出口，禁止别处 fetch</span>
+├── <span class="fd">stores/</span>
+│   └── <span class="nw">ai.ts</span>                      <span class="cm"># jobs / quota / review 三块状态</span>
+├── <span class="fd">components/panel/</span>
+│   └── <span class="fx">RightSidebar.vue</span>          <span class="cm"># ✎ 补丁1：尾部挂 &lt;AiPanel/&gt;（+3 行）</span>
+├── <span class="fd">core/layers/</span>
+│   └── <span class="fx">useLayerContextMenu.ts</span>     <span class="cm"># ✎ 补丁2：注入 4 个 AI 菜单项（+18 行）</span>
+├── <span class="fd">utils/</span>
+│   ├── <span class="fx">templateIO.ts</span>              <span class="cm"># ✎ 补丁3：JSON 协议加 aiBindings 段（+40 行）</span>
+│   └── <span class="fx">exporter.ts</span>               <span class="cm"># ✎ 补丁4：role=hotspot 不栅格化，吐 JSON</span>
+└── <span class="fx">main.ts</span>                       <span class="cm"># ✎ 补丁5：pinia + fontGuard() 启动自检</span>
+<span class="fd">server/</span>                               <span class="cm"># 新增，Node 端出图（Leafer-Node + sharp）</span>
+  └── <span class="nw">render.ts</span>                     <span class="cm"># 2x PNG / WebP / 多画板 / 热区侧车文件</span>
+  </div>
+
+  <!-- ① -->
+  <h3>① <code>AiPanel.vue</code> + 图层右键菜单 — 把「AI」变成图层的一个动作，不是一个页面</h3>
+  <div class="tw"><table>
+    <thead><tr><th>项</th><th>定义</th></tr></thead>
+    <tbody>
+      <tr><td><b>触发</b></td><td>选中 <code>Image</code> 图层 → 右键 / 右侧面板自动切到「AI」Tab。选中非图片图层时面板显示<span class="mid">「该图层不参与生成」</span>并置灰。</td></tr>
+      <tr><td><b>四个动作</b></td><td><code>AI 试衣</code>（需 role=model + 已绑 garment）· <code>局部重绘</code>（框选 → inpainting）· <code>AI 换背景</code> · <code>AI 超清 2x</code>。灰态必须给<b>可执行的补救提示</b>（"先把商品图层标为 garment"），不要只 disable。</td></tr>
+      <tr><td><b>表单项</b></td><td> garment 选择器（从绑定池挑，显示 SKU+色号缩略图）· category 自动带出（<code>tops/bottoms/dresses/outerwear</code>，v1.5 只吃这四类）· mode 三档 <code>Performance/Balanced/Quality</code> 并显示<b>预估秒数与分</b> · <code>seed</code>（默认锁死，🔒 图标=可复现）· <code>seg_free</code> 开关 · <code>nsfw_filter</code>（内衣/泳装类目需业务负责人二次勾选）。</td></tr>
+      <tr><td><b>提交前拦截</b></td><td>调 <code>POST /api/jobs/estimate</code> → 弹<b>费用与库存确认条</b>：<span class="pill">本次 1 张 · ¥0.05 · 缓存命中✔ · 预计 6s</span>；批量时显示 <span class="pill a">600 张 · ¥31.5 · 命中 214 · 实跑 386 · 约 41 分钟</span>。<b>没有这一条，运营会把预算点爆。</b></td></tr>
+      <tr><td><b>产出去向</b></td><td><b>不新开页面、不下载。</b>成功后写回原图层 <code>image.url</code>，历史版本压进 <code>layer.meta.aiHistory[]</code>，面板底部出 3 帧缩略时间线可一键回滚。</td></tr>
+      <tr><td class="k">工时 / 验收</td><td><b>2.0 d</b> · 选中图层后 ≤1 次点击可发起；费用确认条必现；失败图层挂红角标 + 「重试 / 换引擎 / 人工兜底」三选。</td></tr>
+    </tbody>
+  </table></div>
+
+  <!-- ② -->
+  <h3>② <code>layerMeta.ts</code> — 图层从「图形」升级为「有业务身份的节点」</h3>
+  <p style="color:var(--tx2);margin-bottom:10px">这是全稿<b>最重要的一处</b>。没有 role 语义，模板就只是张图；有了 role，模板才变成<b>可批量驱动的产线图纸</b>。</p>
+  <details open><summary>layerMeta.ts · 类型与写入规范<span class="fp">src/ai/layerMeta.ts</span></summary>
+<pre><span class="cm">/** 挂在 Leafer Layer.userData.ai 上，随模板 JSON 一起持久化 */</span>
+<span class="kw">export type</span> <span class="ty">LayerRole</span> = <span class="st">'model'</span> | <span class="ty">GarmentRole</span> | <span class="st">'price'</span> | <span class="st">'logo'</span> | <span class="st">'qr'</span> | <span class="st">'badge'</span> | <span class="st">'hotspot'</span> | <span class="st">'deco'</span>;
+<span class="kw">export type</span> <span class="ty">GarmentRole</span> = <span class="st">'garment.top'</span> | <span class="st">'garment.bottom'</span> | <span class="st">'garment.full'</span> | <span class="st">'garment.outer'</span>;
+
+<span class="kw">export interface</span> <span class="ty">AILayerMeta</span> {
+  v: <span class="nm">1</span>;
+  role: <span class="ty">LayerRole</span>;
+  <span class="cm">// ── 绑定：role=model 时指向"这个模特本季穿什么"，支持表达式</span>
+  bind?: {
+    skuId?:   <span class="ty">string</span>;                 <span class="cm">// 精确绑定（主图/KOL 专用模板）</span>
+    skuExpr?: <span class="st">'row.sku.top'</span> | <span class="st">'row.sku.bottom'</span> | <span class="st">'row.sku.full'</span>; <span class="cm">// 批量列映射</span>
+    colorway?: <span class="st">'row.color'</span> | <span class="ty">string</span>;
+    modelId?: <span class="ty">string</span>;                 <span class="cm">// 合成人台 ID（seed 派生，非真人）→ 锁品牌一致性靠 seed 不靠档期</span>
+  };
+  lockAI?: <span class="kw">boolean</span>;                    <span class="cm">// true=永不参与生成（LOGO/法务免责语）</span>
+  <span class="cm">// ── 生成痕迹：可复现 + 可审计 + 可回滚</span>
+  lastJobId?: <span class="ty">string</span>;
+  aiHistory?: { url:<span class="ty">string</span>; jobId:<span class="ty">string</span>; seed:<span class="ty">number</span>; provider:<span class="ty">string</span>; at:<span class="ty">number</span>; costCent:<span class="ty">number</span> }[];
+  <span class="cm">// ── 热区：role=hotspot 时由 SCHP parsing 回写，相对图层归一化坐标</span>
+  bbox?: { x:<span class="ty">number</span>; y:<span class="ty">number</span>; w:<span class="ty">number</span>; h:<span class="ty">number</span>; linkSku?:<span class="ty">string</span> };
+}
+
+<span class="cm">// 唯一写入口，禁止业务代码直接摸 userData</span>
+<span class="kw">export const</span> <span class="fn">setRole</span> = (layer:<span class="ty">Leaf</span>, role:<span class="ty">LayerRole</span>, patch=<span class="kw">null</span>) =>
+  layer.userData.ai = { v:<span class="nm">1</span>, role, ...(layer.userData.ai??{}), ...patch };
+
+<span class="cm">/* 模板自检：导出/投产前跑一遍，红项阻断批量 */</span>
+<span class="kw">export const</span> <span class="fn">auditTemplate</span> = (tree:<span class="ty">Leaf[]</span>):<span class="ty">AuditReport</span> => {
+  <span class="kw">const</span> c = <span class="fn">countByRole</span>(tree);
+  <span class="kw">return</span> {
+    blocking: [
+      c.model!==<span class="nm">1</span>        &amp;&amp; <span class="st">`role=model 必须且只能有 1 个（当前 <span class="nm">${c.model??<span class="nm">0</span>}</span>）`</span>,
+      !c[<span class="st">'garment.top'</span>] &amp;&amp; !c[<span class="st">'garment.full'</span>] &amp;&amp; <span class="st">`缺 garment 图层，AI 试衣无从取衣`</span>,
+      tree.<span class="fn">some</span>(l=&gt;l.userData.ai?.lockAI!==<span class="kw">true</span> &amp;&amp; <span class="fn">isFontLayer</span>(l) &amp;&amp; !<span class="fn">isEmbeddedFont</span>(l))
+        &amp;&amp; <span class="st">`存在未内嵌字体 → 服务端渲染必变宋体/豆腐块`</span>,
+    ].<span class="fn">filter</span>(<span class="ty">Boolean</span>),
+    warns: [ !c.hotspot &amp;&amp; <span class="st">`无热区图层，详情页不可点击，少一档报价`</span> ].<span class="fn">filter</span>(<span class="ty">Boolean</span>),
+  };
+};</pre>
+  </details>
+  <div class="note"><span class="lb">约定 · 写进 CONTRIBUTING.md</span>
+  <b><code>lockAI=true</code> 是法务开关不是 UI 开关。</b>价格、LOGO、二维码、"AI 生成仅供参考"免责语、平台水印这五类图层默认锁死，且<b>不允许运营在 UI 上解锁</b>（要解锁走审批，留 audit log）。模型重绘小字的能力至今不可靠，别给它机会。</div>
+
+  <!-- ③ -->
+  <h3>③ <code>useGenerate.ts</code> — SSE 订阅 + 图层热替换（含失败语义）</h3>
+  <details><summary>useGenerate.ts · 只拿 job_id，前端零模型 SDK<span class="fp">src/ai/useGenerate.ts</span></summary>
+<pre><span class="kw">import</span> { <span class="fn">useAIStore</span> } <span class="kw">from</span> <span class="st">'@/stores/ai'</span>;
+
+<span class="kw">export const</span> <span class="fn">useGenerate</span> = () => {
+  <span class="kw">const</span> ai = <span class="fn">useAIStore</span>();
+
+  <span class="cm">/** 唯一发起口：先换券拿 jobId，再挂 SSE。同步返回，不 await 结果 */</span>
+  <span class="kw">const</span> <span class="fn">fire</span> = <span class="kw">async</span> (layer:<span class="ty">Leaf</span>, opts:<span class="ty">GenOpts</span>) => {
+    <span class="kw">const</span> meta = <span class="fn">assertBindable</span>(layer);               <span class="cm">// role/绑定不齐 → throw 带补救文案</span>
+    <span class="kw">const</span> q = <span class="kw">await</span> <span class="fn">api.estimate</span>({ layer:<span class="fn">fingerprint</span>(layer), ...opts });
+    <span class="kw">if</span> (!<span class="kw">await</span> <span class="fn">confirmCost</span>(q)) <span class="kw">return</span>;                  <span class="cm">// §01① 费用确认条</span>
+
+    <span class="kw">const</span> { jobId, cacheHit } = <span class="kw">await</span> <span class="fn">api.submit</span>({       <span class="cm">// POST /api/jobs → 201</span>
+      idemKey : <span class="fn">buildIdemKey</span>(layer, opts),            <span class="cm">// §03，前端只算不判重</span>
+      personId: meta.bind.modelId, garmentSku: <span class="fn">resolveSku</span>(layer),
+      category : opts.category, mode: opts.mode, seed: opts.seed ?? <span class="nm">20261118</span>,
+      segFree  : opts.segFree, templateVer: <span class="fn">TEMPLATE_VER</span>, pipelineVer: <span class="ty">PIPELINE_VER</span>,
+      cbUrl    : <span class="fn">layerRef</span>(layer),                      <span class="cm">// 回写定位，服务端不认画布</span>
+    });
+    <span class="fn">ai.upsert</span>({ jobId, layerId:layer.id, state: cacheHit?<span class="st">'HIT'</span>:<span class="st">'QUEUED'</span>, ...q });
+    <span class="kw">if</span> (cacheHit) <span class="fn">ai.setProgress</span>(jobId, <span class="nm">1</span>);            <span class="cm">// 命中直接满条，体感 0 等待</span>
+    <span class="fn">ai.subscribe</span>(jobId);                             <span class="cm">// 幂等：同 jobId 不重复挂 SSE</span>
+  };
+
+  <span class="cm">/** SSE 事件 → 画布反应。这里每一条都对应一个"运营看得见"的变化 */</span>
+  <span class="kw">const</span> <span class="fn">onEvt</span> = (e:<span class="ty">JobEvent</span>) => {
+    <span class="kw">const</span> layer = <span class="fn">leafById</span>(e.layerId);
+    <span class="kw">switch</span> (e.type) {
+      <span class="kw">case</span> <span class="st">'queued'</span>:   <span class="fn">ai.set</span>(e.jobId,{state:<span class="st">'QUEUED'</span>, pos:e.pos}); <span class="kw">break</span>;   <span class="cm">// 角标「排队 37」</span>
+      <span class="kw">case</span> <span class="st">'running'</span>:   <span class="fn">ai.set</span>(e.jobId,{state:<span class="st">'RUNNING'</span>, pct:e.pct});
+                       <span class="fn">layer</span>?..<span class="fn">opacity</span>(<span class="nm">0.55</span>); <span class="fn">showScanline</span>(layer); <span class="kw">break</span>;     <span class="cm">// 原图半透+扫描线</span>
+      <span class="kw">case</span> <span class="st">'preview'</span>:   <span class="fn">layer</span>?..<span class="fn">setAttr</span>(<span class="st">'image.url'</span>, e.thumbUrl); <span class="kw">break</span>;     <span class="cm">// 4s 出低清预览，止血焦虑</span>
+      <span class="kw">case</span> <span class="st">'postfx'</span>:    <span class="fn">ai.set</span>(e.jobId,{state:<span class="st">'POSTFX'</span>}); <span class="kw">break</span>;            <span class="cm">// 「回贴中」= 保 logo 那步</span>
+      <span class="kw">case</span> <span class="st">'review'</span>:    <span class="fn">ai.set</span>(e.jobId,{state:<span class="st">'REVIEW'</span>});
+                       <span class="fn">commitLayer</span>(layer, e); <span class="fn">toast</span>.<span class="fn">info</span>(<span class="st">'已出图，待审'</span>); <span class="kw">break</span>;
+      <span class="kw">case</span> <span class="st">'ready'</span>:     <span class="fn">ai.set</span>(e.jobId,{state:<span class="st">'READY'</span>}); <span class="fn">clearBadge</span>(layer); <span class="kw">break</span>;
+      <span class="kw">case</span> <span class="st">'retry'</span>:     <span class="fn">ai.set</span>(e.jobId,{state:<span class="st">'RUNNING'</span>, try:e.try});
+                       <span class="fn">toast</span>.<span class="fn">warning</span>(<span class="st">`限流，第 <span class="nm">${e.try}</span> 次退避重试中`</span>); <span class="kw">break</span>; <span class="cm">// 不惊动用户</span>
+      <span class="kw">case</span> <span class="st">'failed'</span>:    <span class="fn">rollbackLayer</span>(layer); <span class="fn">ai.set</span>(e.jobId,{state:e.retryable?<span class="st">'RETRY'</span>:<span class="st">'DEAD'</span>, err:e.err});
+                       <span class="fn">redBadge</span>(layer, {retry:<span class="fn">retryOne</span>, switchProvider:<span class="fn">reroute</span>, manual:<span class="fn">toDeadLetter</span>}); <span class="kw">break</span>;
+      <span class="kw">case</span> <span class="st">'quota'</span>:     <span class="fn">ai.burn</span>(); <span class="fn">modal</span>.<span class="fn">open</span>(<span class="st">'QuotaDrawer'</span>, e); <span class="kw">break</span>;      <span class="cm">// 402 → 熔断+换引擎</span>
+    }
+  };
+  <span class="kw">return</span> { fire, onEvt };
+};</pre>
+  </details>
+  <div class="note b"><span class="lb">三条 UX 硬指标</span>
+  ① <b>4 秒必须给 <code>preview</code> 事件</b>——人等 6 秒不焦虑，等 6 秒黑屏会连点五下（然后打出五个计费任务）；<br>
+  ② 生成中<b>原图降透明度而不是盖 loading 遮罩</b>，运营要能继续挪旁边的价格图层，画布不许锁；<br>
+  ③ <code>retry</code> 事件<b>不弹 toast 打断</b>，只把角标转成呼吸黄点。退避是系统的事，不是用户的锅。</div>
+
+  <!-- ④ -->
+  <h3>④ <code>BatchDrawer.vue</code> — 600 个 SKU 一次投料，先算钱再开跑</h3>
+  <div class="tw"><table>
+    <thead><tr><th>区块</th><th>交互与规则</th></tr></thead>
+    <tbody>
+      <tr><td><b>投料</b></td><td>粘贴 TSV（从 ERP/飞书表直接 Ctrl+V）或 CSV 拖入。首行映射：<code>sku | 色号 | 上衣图 | 下装图 | 售卖价 | 卖点</code> → 下拉绑到模板 <code>bind.skuExpr</code>。<b>图片列支持三种来源</b>：OSS 直链 / 本地 zip（前端读 File 算 sha256 后 <code>POST /api/assets</code> 秒传） / 商品库 ID。</td></tr>
+      <tr><td><b>预检（阻断级）</b></td><td>跑 <code>auditTemplate()</code> + 行级校验，结果分三色：<span class="yes">214 可直出</span> · <span class="mid">372 需回贴保 logo</span> · <span class="no">14 拦截</span>。拦截原因落到行内红字：<code>印花面积&gt;40%</code> / <code>条纹款纹理性漂移高危</code> / <code>纯白婚纱（v1.5 对白场溢出）</code> / <code>无 garment 平铺图</code> / <code>色号与图不符</code>。</td></tr>
+      <tr><td><b>报价条</b></td><td>固定吸底：<b>实跑 386 × ¥0.05 + 命中 214 × ¥0 = ¥19.30 · 本地卡余量 4120 张 · 预计 41 min · 完成后自动进 REVIEW</b>。超日预算 <code>¥300</code> 时变红并要求填<b>成本中心 + 活动号</b>（§06 记账前置，不填不能投）。</td></tr>
+      <tr><td><b>投放策略</b></td><td>三选一：<code>夜间慢跑（最省）</code> / <code>2 小时内要（削峰到 API）</code> / <code>大促插队（占 interactive 配额，需主管批）</code>。对应 §07 的队列与 Provider 权重，<b>运营选的是业务语义，不是技术参数</b>。</td></tr>
+      <tr><td><b>断点续投</b></td><td>批次号 <code>batch_id</code> 落库；刷新页面/关浏览器不丢。抽屉顶部常驻 <code>386/386 ██████░░ 71% · 失败 3（2 自动重试中，1 待人工）</code>，点数字直接筛。</td></tr>
+      <tr><td class="k">工时 / 验收</td><td><b>2.5 d</b> · 600 行粘贴 → 预检 ≤2s → 报价条数字与后端 <code>/estimate</code> 分差不超 1 分；杀掉浏览器重进，进度续上。</td></tr>
+    </tbody>
+  </table></div>
+
+  <!-- ⑤ -->
+  <h3>⑤ <code>ReviewBench.vue</code> — 审核台：把「图货一致」做成可量产的键盘流</h3>
+  <div class="grid g2">
+    <div class="card">
+      <h5><span class="dot d-am"></span>布局：三栏，鼠标几乎不参与</h5>
+      <p>左=筛树（批次/类目/风险标签/审核人）· 中=600 图瀑布（每张角标 <code>¥0.05</code> <code>6.2s</code> <code>local</code> <code>logo✔</code>）· 右=1:1 对照镜：<b>左半 AI 成图 / 右半原始白底商品图</b>，中间滑杆擦除对比 + logo 区域 3× 放大镜。</p>
+      <p style="margin-top:8px"><b>键位：</b><code>←→</code> 翻张 · <code>↑</code> 过 · <code>↓</code> 打回（弹出原因码 1~6）· <code>R</code> 换 seed 重跑 · <code>P</code> 换 Provider · <code>F</code> 送手动修图 · <code>Ctrl+Enter</code> 整批放行 · <code>?</code> 速查。</p>
+    </div>
+    <div class="card">
+      <h5><span class="dot d-rd"></span>6 个原因码 = 给你的模型团队发周报</h5>
+      <p><code>E1 logo/印花变形</code> · <code>E2 条纹/格纹间距漂移</code> · <code>E3 色差 ΔE&gt;6</code> · <code>E4 手部/领口崩坏</code> · <code>E5 身材比例失真</code> · <code>E6 平台合规（露肤/禁词）</code>。</p>
+      <p style="margin-top:8px">打回不是终点：<b>E1/E2 自动升级为「强制走 POSTFX 回贴」并写入 <code>garment.risk_tags</code></b>，同款下次直接跳过裸跑——<span class="cy">这张表三个月后就是你的选型依据</span>：E4 集中在某 Provider 就降它的路由权重。</p>
+    </div>
+  </div>
+  <div class="tw"><table>
+    <thead><tr><th>审核 SLA 与兜底</th><th>值</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>单人吞吐</td><td><b class="yes">600 张 / ≈40 min</b></td><td>键盘流 + 默认只聚焦 <code>risk_score&gt;0.35</code> 的 31%；低风险图走<b>抽检 10%</b>，不是全检。</td></tr>
+      <tr><td>risk_score 怎么来</td><td>规则优先，不上模型</td><td><code>印花面积</code>+<code>条纹频域能量</code>+<code>SCHP 边缘置信度</code>+<code>ΔE 对白底图</code>+<code>该 SKU 历史打回率</code> 五项加权。<b>V1 别上"AI 审核 AI"</b>，误杀一次爆款比慢一点贵得多。</td></tr>
+      <tr><td>超时兜底</td><td>4h 未审 → 钉钉催</td><td>大促期 <code>REVIEW</code> 超 4h 自动<b>降级放行至「仅站内草稿」</b>（不上主图），避免审核成瓶颈把上新节奏堵死。</td></tr>
+      <tr><td>留痕</td><td>谁/何时/原因/耗时</td><td><code>review_log</code> 不可改，平台抽检或客诉"图不符实"时，这是你唯一的护身符。</td></tr>
+      <tr><td class="k">工时</td><td><b>2.0 d</b></td><td>验收：盲测 100 张（含 12 张埋雷），漏放 ≤1、误杀 ≤3。</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="note g"><span class="lb">顺手还的债 · 1.5 d · 不做这步上面全白搭</span>
+  GzmDesign 上游 4 个已知坏点必须先修，否则运营点两下就骂人：<b>①复制/粘贴失效</b>（<code>useCopyPaste</code> 里 clipboard 事件 target 判定）· <b>②图层显隐按钮失灵</b>（<code>visible</code> 与 <code>Leafer.visible</code> 双写丢了）· <b>③切换中文字体无反应</b>（<code>fontGuard()</code>：自建 <code>/fonts</code> + <code>@font-face</code> + Nginx 补 <code>font/woff2</code> MIME 与 CORS，<b>本地能跑上线变豆腐块就栽在这</b>）· <b>④撤销栈吞 AI 改图</b>（<code>image.url</code> 变更要走 <code>app.tree.emit('record')</code>，否则 Ctrl+Z 回不到上一版脸）。</div>
+</section>
+
+<hr>
+
+<!-- ══════════ 02 ══════════ -->
+<section id="s2">
+  <h2><span class="n">02</span>数据层总览 · 9 张表，一张 ER 说完</h2>
+  <p class="lead">原则：<b>Postgres 是唯一真相，Redis 只做热缓存与计数，OSS 只存文件不存状态。</b>任何 worker 内存里都不许有"当前状态"这种东西——一次滚动发布就能让你丢 300 个 job。</p>
+
+  <div class="tw"><table>
+    <thead><tr><th>表</th><th>职责</th><th>关键约束 / 索引</th><th>写入方</th></tr></thead>
+    <tbody>
+      <tr><td><code>person_asset</code></td><td><b>合成人台库</b>（非真人、无签约）：seed 派生正面全身 + 身材/肤色/姿态向量 + <code>ver</code> + 血缘链</td><td><code>UNIQUE(model_code, ver)</code>；<code>lineage</code> 非空才可上主图；<code>face_preset</code> 禁跨租户</td><td>资产后台</td></tr>
+      <tr><td><code>garment_asset</code></td><td>商品平铺图：<code>sha256</code> 内容指纹 + 类目 + <code>risk_tags[]</code> + 主数据镜像</td><td><code>UNIQUE(sha256)</code> <b>秒传与去重的地基</b>；<code>GIN(risk_tags)</code></td><td>PIM 同步</td></tr>
+      <tr style="background:rgba(167,139,250,.05)"><td><code><b>tryon_job</b></code> ★</td><td><b>核心事实表</b>：一次"某人穿某衣"的租约</td><td><code>UNIQUE(idem_key)</code> · <code>UNIQUE(provider, provider_req_id)</code> · <code>INDEX(state, prio, created_at)</code> · <code>INDEX(batch_id)</code></td><td>API</td></tr>
+      <tr><td><code>job_attempt</code></td><td>每次真实调用（重试=新行），对账与排障靠它</td><td><code>INDEX(job_id, seq)</code>；<code>latency_ms / cost_cent / err_code</code></td><td>Worker</td></tr>
+      <tr><td><code>output_asset</code></td><td>成图版本：<code>ver</code> 单调递增，<code>postfx_of</code> 指向裸跑版</td><td><code>UNIQUE(job_id, ver, kind)</code>；<code>kind: raw|postfx|master|webp</code></td><td>POSTFX</td></tr>
+      <tr><td><code>review_log</code></td><td>审核流水，<b>append-only，无 UPDATE 权限</b></td><td><code>INDEX(reviewer, at)</code>；<code>reason_code</code> 外键到 §05 六码</td><td>审核台</td></tr>
+      <tr><td><code>template_binding</code></td><td>模板 ⇄ 图层 ⇄ SKU 表达式（§04）</td><td><code>UNIQUE(template_id, ver, layer_key)</code></td><td>设计器</td></tr>
+      <tr><td><code>cost_ledger</code></td><td>复式记账：预估 / 实扣 / 命中免单 / 退款（§06）</td><td><code>UNIQUE(job_id, entry_type)</code> 幂等入账</td><td>Ledger</td></tr>
+      <tr><td><code>provider_health</code></td><td>滑动窗口 P95 / 失败率 / 429 密度 → 路由权重</td><td>1 行/provider，<code>advisory xact lock</code> 更新</td><td>Probe</td></tr>
+    </tbody>
+  </table></div>
+
+  <details><summary>ER 关系图（ASCII，贴进飞书文档不塌）<span class="fp">9 tables · 1 core</span></summary>
+<pre><span class="tree" style="border:none;background:none;padding:0">person_asset ─┐                          ┌─ review_log (append-only)
+              ├─► <span class="nw">tryon_job</span> ★ ─┬─► job_attempt ─┤
+garment_asset ─┘   │  UNIQUE(idem_key)  │              └─ cost_ledger (幂等双写)
+  │  UNIQUE(sha256) │                    └─► output_asset (ver↑, postfx_of→raw)
+  └─ risk_tags[] ───┤                              │
+                    │                              └─► template_binding ─► template_json(Gzm)
+                    └─ batch_id ─► gen_batch (预算/成本中心/投放策略/续投游标)</span></pre>
+  </details>
+</section>
+
+<hr>
+
+<!-- ══════════ 03 ══════════ -->
+<section id="s3">
+  <h2><span class="n">03</span>幂等键：唯一值得半夜爬起来写的那行代码</h2>
+  <p class="lead">队列必然重投（<code>acks_late</code> + worker 被 OOM kill + 上游超时重试），<b>生成类任务重投一次就是真金白银烧掉 ¥0.05</b>。业务幂等键 ≠ Celery task_id：前者锁"这张图该不该重算"，后者只追踪"这次投递"。</p>
+
+  <details open><summary>buildIdemKey · 前端算、后端复算、DB 唯一约束兜底<span class="fp">三层校验，缺一层必穿</span></summary>
+<pre><span class="cm"># ───────── 组成规则：任何一个"变了就该重出"的东西都必须进键 ─────────</span>
+idem_key = sha256(<span class="st">"|"</span>.join([
+    person_asset.id, person_asset.ver,        <span class="cm"># 换人台版本/seed_ns → 重算（seed 不直进键，已由 ver 收敛）</span>
+    person_asset.seed_ns,                     <span class="cm"># 引擎升级开新 ns → 老缓存自然失效，不污染历史稿</span>
+    garment_asset.id, garment_asset.ver,       <span class="cm"># 换图/换色号 → 重算（ver 由 sha256 变驱动）</span>
+    category,                                  <span class="cm"># tops / bottoms / full / outer，v1.5 强相关</span>
+    mode,                                      <span class="cm"># Performance|Balanced|Quality 出图本就不同</span>
+    <span class="fn">seg_free</span>(bool), <span class="fn">garment_mask_hash</span>[:<span class="nm">8</span>],   <span class="cm"># 手动改过 mask → 重算</span>
+    seed,                                      <span class="cm"># v1.5 原生支持：同输入同 seed 同图 ⇒ 可复现+可缓存</span>
+    pipeline_ver,                              <span class="cm"># ★ 换 steps/换 parser/加 LoRA → 老缓存自然失效</span>
+    template_visual_hash[:<span class="nm">8</span>],                <span class="cm"># 只影响"排"的改动不该击穿缓存 ⇒ 取"生成区"子树哈希</span>
+]))</pre>
+  </details>
+
+  <div class="grid g2">
+    <div class="card"><h5><span class="dot d-cy"></span>为什么 <code>pipeline_ver</code> 必须进键</h5><p>三个月后你把 steps 从 30 调到 50、或换了 SCHP 解析器。不进键的后果：运营拿着一张"去年味"的缓存图问你"怎么变丑了"，而你查不出它是哪天生的。<b>进键 = 发版即灰度失效，无需清库。</b></p></div>
+    <div class="card"><h5><span class="dot d-bl"></span>为什么 <code>template_visual_hash</code> 只取生成区</h5><p>改个价格字号不该让 600 张图重跑。所以哈希<b>只覆盖 <code>role=model|garment</code> 子树的几何与素材引用</b>，<code>role=price|logo|qr|deco</code> 的改动走纯前端重排，零成本。<span class="pill">这行区分了"会算账的架构"和"能跑的 demo"</span></p></div>
+  </div>
+
+  <h4>落库：不"先查后写"，用约束兜并发</h4>
+  <details><summary>SQL · ON CONFLICT 是唯一的正确写法<span class="fp">migrations/0003_idem.sql</span></summary>
+<pre><span class="cm">-- 并发下 SELECT 然后 INSERT 必穿（两个 worker 同时看到"没有"）</span>
+<span class="kw">INSERT INTO</span> tryon_job (idem_key, person_id, garment_id, category, mode, seed,
+                       pipeline_ver, state, batch_id, prio, cost_est_cent, cb_ref)
+<span class="kw">VALUES</span> ($<span class="nm">1</span>,$<span class="nm">2</span>,$<span class="nm">3</span>,$<span class="nm">4</span>,$<span class="nm">5</span>,$<span class="nm">6</span>,$<span class="nm">7</span>,<span class="st">'QUEUED'</span>,$<span class="nm">8</span>,$<span class="nm">9</span>,$<span class="nm">10</span>,$<span class="nm">11</span>)
+<span class="kw">ON CONFLICT</span> (idem_key) <span class="kw">DO UPDATE SET</span>
+    hit_count   = tryon_job.hit_count + <span class="nm">1</span>,
+    last_hit_at = now()
+<span class="kw">RETURNING</span> id, (xmax = <span class="nm">0</span>) <span class="kw">AS</span> inserted;   <span class="cm">-- inserted=false ⇒ 命中，直接挂已有 job 的 SSE，不烧钱</span>
+
+<span class="cm">-- 二级幂等：Provider 侧 req_id 也唯一，防止"我们以为超时了、其实它出了"</span>
+<span class="kw">CREATE UNIQUE INDEX</span> uq_job_provider_req <span class="kw">ON</span> tryon_job(provider, provider_req_id)
+  <span class="kw">WHERE</span> provider_req_id <span class="kw">IS NOT NULL</span>;
+<span class="cm">-- 撞这个索引 ⇒ 立刻转 poll 模式，绝不再 submit 第二次（双扣费经典死法）</span></pre>
+  </details>
+
+  <div class="note"><span class="lb">三个必须写进 code review checklist 的细节</span>
+  <b>① 幂等键不含时间戳</b>，含了等于没有；<b>② <code>credits</code> 扣减与 job 创建必须同事务</b>，否则重投会扣两次（§06）；<b>③ 缓存命中也要走一遍 <code>output_asset</code> 权限校验</b>——A 客户的图命中 B 客户的缓存 = 事故，<code>tenant_id</code> 要进键或进查询条件，二选一，不能都不做。</div>
+  <div class="grid g4" style="margin-top:16px">
+    <div class="card"><div class="mtr">35→55%<small>缓存命中率目标</small></div></div>
+    <div class="card"><div class="mtr">≈45%<small>纯毛利（不烧 GPU 的那部分）</small></div></div>
+    <div class="card"><div class="mtr">3 层<small>前端算 / 后端复算 / DB 约束</small></div></div>
+    <div class="card"><div class="mtr">1 行<small>写错就双扣费的那行 SQL</small></div></div>
+  </div>
+</section>
+
+<hr>
+
+<!-- ══════════ 04 ══════════ -->
+<section id="s4">
+  <h2><span class="n">04</span>SKU 绑定：模板从「一张图」变成「一条产线」</h2>
+  <p class="lead">绑定分三级，<b>从精确到泛化，运营按模板档次选</b>。核心思想：模板里存的是<b>占位 + 表达式 + garment 引用</b>，永远不存烘焙死的像素。</p>
+
+  <div class="tw"><table>
+    <thead><tr><th>级别</th><th>写法</th><th>适用场景</th><th>换款成本</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill">L1 硬绑</span></td><td><code>bind.skuId = "SK2411-BLK"</code></td><td>大促主 KV、明星同款、1 SKU 1 张精修</td><td>改 1 个字段，重跑 1 张</td></tr>
+      <tr><td><span class="pill a">L2 列映射</span></td><td><code>bind.skuExpr = "row.sku.top"</code> + <code>colorway="row.color"</code></td><td><b>主力</b>：系列上新 600 SKU 共用 8 套模板</td><td>粘一屏 TSV，零设计操作</td></tr>
+      <tr><td><span class="pill p">L3 规则池</span></td><td><code>bind.pool = "2026AW/针织衫"</code> + <code>strategy="round_robin_by_hue"</code></td><td>长尾清仓、店播切片、A/B 测模特</td><td>自动，按色相就近配模特避免打架</td></tr>
+    </tbody>
+  </table></div>
+
+  <details open><summary>模板 JSON 协议扩展 · <code>aiBindings</code> 段（GzmDesign 模板文件的唯一新增顶层键）<span class="fp">utils/templateIO.ts · +40 行</span></summary>
+<pre>{
+  <span class="st">"v"</span>: <span class="nm">2</span>, <span class="st">"templateVer"</span>: <span class="st">"AW26-KNIT-03"</span>, <span class="st">"pipelineVer"</span>: <span class="st">"v1.5.2-p1"</span>,
+  <span class="st">"boards"</span>: [ {<span class="st">"key"</span>:<span class="st">"main_1x1"</span>,<span class="st">"w"</span>:<span class="nm">800</span>,<span class="st">"h"</span>:<span class="nm">800</span>},
+              {<span class="st">"key"</span>:<span class="st">"detail_3x4"</span>,<span class="st">"w"</span>:<span class="nm">750</span>,<span class="st">"h"</span>:<span class="nm">1000</span>},
+              {<span class="st">"key"</span>:<span class="st">"live_9x16"</span>,<span class="st">"w"</span>:<span class="nm">1080</span>,<span class="st">"h"</span>:<span class="nm">1920</span>} ],
+
+  <span class="st">"aiBindings"</span>: {
+    <span class="st">"defaults"</span>: { <span class="st">"mode"</span>:<span class="st">"Balanced"</span>, <span class="st">"seedLock"</span>:<span class="kw">true</span>, <span class="st">"segFree"</span>:<span class="kw">true</span>,
+                  <span class="st">"postfx"</span>:<span class="st">"auto_if_risk"</span>, <span class="st">"providerPolicy"</span>:<span class="st">"cheapest_capable"</span> },
+
+    <span class="st">"layers"</span>: {
+      <span class="st">"mdl"</span>: { <span class="st">"role"</span>:<span class="st">"model"</span>,
+        <span class="st">"asset"</span>: {<span class="st">"modelId"</span>:<span class="st">"M-ASIA-017"</span>, <span class="st">"verExpr"</span>:<span class="st">"latest_valid"</span>},
+        <span class="st">"bind"</span>  : {<span class="st">"skuExpr"</span>:<span class="st">"row.sku.top"</span>, <span class="st">"colorway"</span>:<span class="st">"row.color"</span>},
+        <span class="st">"genArea"</span>: {<span class="st">"x"</span>:<span class="nm">0.08</span>,<span class="st">"y"</span>:<span class="nm">0.05</span>,<span class="st">"w"</span>:<span class="nm">0.84</span>,<span class="st">"h"</span>:<span class="nm">0.90</span>},   <span class="cm">// ← 进 visual_hash</span>
+        <span class="st">"fallback"</span>: <span class="st">"M-ASIA-003"</span> },                        <span class="cm">// 人台按身材桶+色相轮转；seed 冻结 → 永远同一张脸</span>
+
+      <span class="st">"g_top"</span>: { <span class="st">"role"</span>:<span class="st">"garment.top"</span>, <span class="st">"srcExpr"</span>:<span class="st">"row.img.top"</span>,
+        <span class="st">"categoryFrom"</span>:<span class="st">"row.spu.category"</span>,                   <span class="cm">// → tops/bottoms/full/outer</span>
+        <span class="st">"forcePostfxIf"</span>: [<span class="st">"has_print"</span>, <span class="st">"stripe_energy&gt;0.4"</span>, <span class="st">"logo_area&gt;0.03"</span>] },
+
+      <span class="st">"g_bot"</span>: { <span class="st">"role"</span>:<span class="st">"garment.bottom"</span>, <span class="st">"srcExpr"</span>:<span class="st">"row.img.bottom"</span>,
+        <span class="st">"onMissing"</span>:<span class="st">"keep_model_original"</span> },                <span class="cm">// 只卖上衣时保留模特原裤</span>
+
+      <span class="st">"price"</span>: { <span class="st">"role"</span>:<span class="st">"price"</span>, <span class="st">"lockAI"</span>:<span class="kw">true</span>, <span class="st">"textExpr"</span>:<span class="st">"¥{row.price_now} ~~¥{row.price_was}~~"</span>,
+        <span class="st">"rules"</span>: {<span class="st">"hideIfNoDiscount"</span>:<span class="kw">true</span>, <span class="st">"font"</span>:<span class="st">"SourceHanSans-Bold.woff2"</span>} },
+
+      <span class="st">"logo"</span> : { <span class="st">"role"</span>:<span class="st">"logo"</span>, <span class="st">"lockAI"</span>:<span class="kw">true</span>, <span class="st">"assetId"</span>:<span class="st">"BRAND-LOGO-V3"</span>, <span class="st">"minClearSpace"</span>:<span class="nm">24</span> },
+      <span class="st">"disc"</span> : { <span class="st">"role"</span>:<span class="st">"badge"</span>, <span class="st">"lockAI"</span>:<span class="kw">true</span>, <span class="st">"text"</span>:<span class="st">"AI 生成效果图，请以实物为准"</span>, <span class="st">"required"</span>:<span class="kw">true</span> },   <span class="cm">// 合规必挂</span>
+      <span class="st">"hs"</span>   : { <span class="st">"role"</span>:<span class="st">"hotspot"</span>, <span class="st">"from"</span>:<span class="st">"provider.parsing.bbox"</span>, <span class="st">"linkExpr"</span>:<span class="st">"row.sku.top"</span>,
+        <span class="st">"emit"</span>:<span class="st">"pdp_hotspots.json"</span>, <span class="st">"tapAreaMin"</span>:<span class="nm">44</span> }
+    },
+
+    <span class="st">"postfx"</span>: { <span class="st">"align"</span>:<span class="st">"tps+mask"</span>, <span class="st">"featherPx"</span>:<span class="nm">9</span>, <span class="st">"blend"</span>:<span class="st">"luma_from_ai × chroma_from_flatlay"</span>,
+                <span class="st">"edgeWrapShadow"</span>:<span class="nm">3</span>, <span class="st">"deltaE_guard"</span>:<span class="nm">6</span> },
+
+    <span class="st">"export"</span>: { <span class="st">"engine"</span>:<span class="st">"leafer-node"</span>, <span class="st">"scale"</span>:<span class="nm">2</span>,
+                <span class="st">"outputs"</span>:[{<span class="st">"board"</span>:<span class="st">"main_1x1"</span>,<span class="st">"fmt"</span>:<span class="st">"png"</span>,<span class="st">"name"</span>:<span class="st">"{sku}_主图"</span>},
+                           {<span class="st">"board"</span>:<span class="st">"detail_3x4"</span>,<span class="st">"fmt"</span>:<span class="st">"webp"</span>,<span class="st">"q"</span>:<span class="nm">86</span>},
+                           {<span class="st">"board"</span>:<span class="st">"*"</span>,<span class="st">"fmt"</span>:<span class="st">"hotmap"</span>,<span class="st">"name"</span>:<span class="st">"pdp_hotspots.json"</span>}],
+                <span class="st">"aigcMark"</span>:{<span class="st">"implicit"</span>:<span class="kw">true</span>,<span class="st">"explicit"</span>:<span class="st">"corner_badge"</span>} }
+  }
+}</pre>
+  </details>
+
+  <details><summary>DLL · <code>template_binding</code> + <code>garment_asset</code>（含妙处注释）<span class="fp">migrations/0004_binding.sql</span></summary>
+<pre><span class="kw">CREATE TABLE</span> garment_asset (
+  id            <span class="ty">bigserial</span> <span class="kw">PRIMARY KEY</span>,
+  tenant_id     <span class="ty">bigint</span> <span class="kw">NOT NULL</span>,
+  sku_id        <span class="ty">text</span> <span class="kw">NOT NULL</span>,               <span class="cm">-- 主数据外键（PIM）</span>
+  colorway      <span class="ty">text</span> <span class="kw">NOT NULL DEFAULT</span> <span class="st">'STD'</span>,
+  category      <span class="ty">text</span> <span class="kw">NOT NULL</span> <span class="kw">CHECK</span> (category <span class="kw">IN</span> (<span class="st">'tops'</span>,<span class="st">'bottoms'</span>,<span class="st">'dresses'</span>,<span class="st">'outerwear'</span>)),
+  flatlay_url   <span class="ty">text</span> <span class="kw">NOT NULL</span>,               <span class="cm">-- 白底平铺，≥1024，无模特无衣架</span>
+  sha256        <span class="ty">text</span> <span class="kw">NOT NULL</span>,               <span class="cm">-- ★ 内容指纹：换图必换 hash ⇒ 驱动 ver ⇒ 自动击穿缓存</span>
+  ver           <span class="ty">int</span> <span class="kw">NOT NULL DEFAULT</span> <span class="nm">1</span>,
+  risk_tags     <span class="ty">text[]</span> <span class="kw">NOT NULL DEFAULT</span> <span class="st">'{}'</span>,  <span class="cm">-- {has_print,stripe,logo_front,sheer,white_heavy,seqin}</span>
+  logo_bbox     <span class="ty">jsonb</span>,                     <span class="cm">-- 人工/检测标一次，POSTFX 保 logo 靠它</span>
+  base_color_lab <span class="ty">float4</span>[<span class="nm">3</span>],               <span class="cm">-- ΔE 守卫的基准（审核台 E3 码）</span>
+  master_data_at <span class="ty">timestamptz</span>,              <span class="cm">-- PIM 最后同步时间，过期告警"图货可能不符"</span>
+  <span class="kw">UNIQUE</span> (tenant_id, sha256)               <span class="cm">-- 秒传 + 跨 SKU 复用（同款多色只传一次）</span>
+);
+<span class="kw">CREATE INDEX</span> gmt_risk  <span class="kw">ON</span> garment_asset <span class="kw">USING GIN</span>(risk_tags);
+<span class="kw">CREATE INDEX</span> gmt_sku   <span class="kw">ON</span> garment_asset (tenant_id, sku_id, colorway, ver <span class="kw">DESC</span>);
+
+<span class="kw">CREATE TABLE</span> template_binding (
+  id           <span class="ty">bigserial</span> <span class="kw">PRIMARY KEY</span>,
+  tenant_id    <span class="ty">bigint</span> <span class="kw">NOT NULL</span>,
+  template_id  <span class="ty">text</span> <span class="kw">NOT NULL</span>,
+  ver          <span class="ty">int</span> <span class="kw">NOT NULL</span>,
+  layer_key    <span class="ty">text</span> <span class="kw">NOT NULL</span>,               <span class="cm"># 对应 JSON 里 aiBindings.layers 的键</span>
+  role         <span class="ty">text</span> <span class="kw">NOT NULL</span>,
+  bind_level   <span class="ty">smallint</span> <span class="kw">NOT NULL</span> <span class="kw">CHECK</span> (bind_level <span class="kw">BETWEEN</span> <span class="nm">1</span> <span class="kw">AND</span> <span class="nm">3</span>),
+  sku_id       <span class="ty">text</span>,  sku_expr <span class="ty">text</span>,  pool_key <span class="ty">text</span>,
+  lock_ai      <span class="ty">bool</span> <span class="kw">NOT NULL DEFAULT</span> <span class="kw">false</span>,
+  visual_hash  <span class="ty">text</span> <span class="kw">NOT NULL</span>,               <span class="cm"># 只算 role∈{model,garment} 子树 ⇒ 改价不击穿缓存</span>
+  published_at <span class="ty">timestamptz</span>,                <span class="cm"># NULL=草稿，批量任务只认已发布</span>
+  <span class="kw">UNIQUE</span> (tenant_id, template_id, ver, layer_key)
+);</pre>
+  </details>
+
+
+    <div class="callout ok" style="margin:14px 0">
+<b>决策已锁（2026-11-18）：人台 100% AI 合成 —— 不签约真人、不接供应商 consistent_model。</b><br>
+这不是省钱决策，是<b>去掉单点故障</b>的决策。三条直接收益：① 没有档期、没有授权到期日 → <code>valid_until</code> 字段<b>退役</b>，换成 <code>lineage</code> 血缘；② 没有供应商绑定 → 换 Provider 不换脸，<b>脸住在你自己的 Postgres 里</b>；③ 边际成本 ¥0.0001/张（铸一次 ¥0.24，摊 2000+ 次复用）。<br>
+代价只有一条但必须认：<b>脸的"可复现性"从合同问题变成了工程问题</b>。合同违约能索赔，seed 丢了只能重铸 —— 所以 R7 把 <code>seed</code>/<code>seed_ns</code> 提为 <code>NOT NULL</code> 且服务端强制注入。
+</div>
+
+    <details open><summary>§4.5 合成人台库 · <code>person_asset</code> DDL 替换稿</summary>
+<pre><span class="cm">-- 旧版 valid_until / agreement_url 整列退役。人台不是"人"，是"一组可复现的 latent 锚"。</span>
+<span class="kw">CREATE TABLE</span> person_asset (
+  id              <span class="ty">text</span> <span class="kw">PRIMARY KEY</span>,               <span class="cm">-- P-ASIA-F42S-071</span>
+  tenant_id       <span class="ty">text</span> <span class="kw">NOT NULL</span>,
+  model_code      <span class="ty">text</span> <span class="kw">NOT NULL</span>,               <span class="cm">-- 品牌内代号：M-ASIA-003 / W-PLUS-011</span>
+  ver             <span class="ty">int</span>  <span class="kw">NOT NULL</span> <span class="kw">DEFAULT</span> 1,      <span class="cm">-- 换脸/换身材桶 → +1；老 ver 只读冻结</span>
+
+  <span class="cm">-- ── 复现三件套：人台的全部身份，缺一不可（R7）──</span>
+  seed            <span class="ty">bigint</span> <span class="kw">NOT NULL</span>,               <span class="cm">-- 服务端 secure_random 铸，前端禁传</span>
+  seed_ns         <span class="ty">text</span> <span class="kw">NOT NULL</span>,               <span class="cm">-- '2026AW-v1'；引擎升级开新 ns，老 ns 转只读</span>
+  face_preset     <span class="ty">jsonb</span> <span class="kw">NOT NULL</span>,               <span class="cm">-- 铸脸唯一真源，见下一折</span>
+
+  <span class="cm">-- ── 身材/色彩向量：只用于路由，不参与审美 ──</span>
+  body_bucket     <span class="ty">text</span> <span class="kw">NOT NULL</span>,               <span class="cm">-- S75/S85/M90/L100/XL115/PLUS130（胸围 cm 桶）</span>
+  height_cm       <span class="ty">int</span>  <span class="kw">NOT NULL</span>,
+  skin_lab        <span class="ty">float4</span>[<span class="ty">3</span>] <span class="kw">NOT NULL</span>,          <span class="cm">-- CIELAB → 撞色规避（米白衣别配冷白高光）</span>
+  pose_set        <span class="ty">text</span>[] <span class="kw">NOT NULL</span> <span class="kw">DEFAULT</span> <span class="st">'{"A_front","B_45","C_walk","D_sit","E_detail"}'</span>,
+  light_set       <span class="ty">text</span>[] <span class="kw">NOT NULL</span> <span class="kw">DEFAULT</span> <span class="st">'{"softbox","window","rim","flat_white"}'</span>,
+
+  <span class="cm">-- ── 合规血缘：R6 三道闸的落地点，也是"这份合同"──</span>
+  lineage         <span class="ty">jsonb</span>,                        <span class="cm">-- {gen_model,gen_ver,prompt_hash,negative_hash,
+                                                  <span class="cm">--  face_embed_sha,cast_at,operator,dedup_score,nsfw_score}</span>
+  dedup_score     <span class="ty">float4</span>,                       <span class="cm">-- 对三库最高余弦，&lt; 0.55 才准升 prod</span>
+  tier            <span class="ty">text</span> <span class="kw">NOT NULL</span> <span class="kw">DEFAULT</span> <span class="st">'sandbox'</span>
+                  <span class="kw">CHECK</span> (tier <span class="kw">IN</span> (<span class="st">'sandbox'</span>,<span class="st">'staging'</span>,<span class="st">'prod'</span>,<span class="st">'retired'</span>)),
+  synthetic_flag  <span class="ty">boolean</span> <span class="kw">NOT NULL</span> <span class="kw">DEFAULT</span> <span class="kw">true</span>,  <span class="cm">-- 恒 true → 下游 AIGC 双标识由它驱动</span>
+
+  <span class="cm">-- ── 经济性 ──</span>
+  cast_cost_cent  <span class="ty">int</span>   <span class="kw">NOT NULL</span> <span class="kw">DEFAULT</span> 0,      <span class="cm">-- 铸脸一次性（8 view × 单价 + 扩 4 光位）</span>
+  use_count       <span class="ty">bigint</span> <span class="kw">NOT NULL</span> <span class="kw">DEFAULT</span> 0,      <span class="cm">-- 摊销分母；&gt;2000 后单张人台成本≈¥0.0001</span>
+  retired_reason  <span class="ty">text</span>,                        <span class="cm">-- brand_refresh / dedup_hit / style_drift</span>
+  created_at      <span class="ty">timestamptz</span> <span class="kw">DEFAULT</span> now()
+);
+<span class="kw">CREATE UNIQUE INDEX</span> uq_person_code_ver <span class="kw">ON</span> person_asset(tenant_id, model_code, ver);
+<span class="kw">CREATE INDEX</span> idx_person_face <span class="kw">ON</span> person_asset <span class="kw">USING</span> ivfflat ((face_preset-&gt;&gt;<span class="st">'embed'</span>) vector_cosine_ops);
+
+<span class="cm">-- ⚠️ 三个 NOT NULL 是全稿最不该被"简化"的地方：
+--    seed 可空     → 半年后一堆认不回来的脸，老详情页无法重出
+--    lineage 可空  → 被问"这人谁/怎么来的"时哑口，合规裸奔
+--    synthetic_flag 可空 → 跨境无法批量声明 AIGC，整店下架风险</span>
+</pre></details>
+
+    <details><summary><code>face_preset</code> 结构 · 锁什么、放什么是有讲究的</summary>
+<pre>{
+  <span class="st">"archetype"</span>:   <span class="st">"asia-urban-25"</span>,      <span class="cm">// 品牌人格档；禁止写成"像××明星"</span>
+  <span class="st">"age_band"</span>:    <span class="st">"24-28"</span>,               <span class="cm">// 只写区间：写死 26 岁会招年龄断言争议</span>
+  <span class="st">"gender_pres"</span>: <span class="st">"f"</span>,                   <span class="cm">// 呈现性别 → 驱动尺码/版型路由</span>
+  <span class="st">"bone"</span>:  { <span class="st">"jaw"</span>:0.32, <span class="st">"cheek"</span>:0.61, <span class="st">"nose_bridge"</span>:0.54, <span class="st">"eye_space"</span>:0.48 },
+  <span class="st">"skin"</span>:  { <span class="st">"lab"</span>:[62.1,9.4,18.2], <span class="st">"finish"</span>:<span class="st">"semi_matte"</span>, <span class="st">"freckle"</span>:0.08 },
+  <span class="st">"hair"</span>:  { <span class="st">"color"</span>:<span class="st">"#2B1D16"</span>, <span class="st">"len"</span>:<span class="st">"shoulder"</span>, <span class="st">"style"</span>:<span class="st">"low_ponytail"</span>, <span class="st">"lock"</span>:<span class="kw">true</span> },
+  <span class="st">"makeup"</span>: <span class="st">"clean-glow"</span>,             <span class="cm">// 锁妆容 = 跨系列气色不飘，"品牌感"真正的来源</span>
+  <span class="st">"expr"</span>:   <span class="st">"neutral-soft"</span>,           <span class="cm">// 禁大笑：牙齿是重绘翻车第一高发区</span>
+  <span class="st">"tattoo"</span>: <span class="kw">false</span>,                    <span class="cm">// 纹身默认关（女装/婚纱类目实测退货率更高）</span>
+  <span class="st">"embed"</span>:  <span class="st">"[0.013,-0.042,…512d]"</span>    <span class="cm">// ArcFace，铸完即写 → R6 查重 + 近似替补共用</span>
+}</pre>
+<p style="font-size:13px;color:var(--mut)"><b>骨相 / 肤色 / 妆容 / 发型 <code>lock=true</code></b>（品牌一致性），<b>姿态 / 光位 / 背景刻意放开</b>（全锁死则 600 张图像证件照联播，CTR 反跌）。<b>一致性锁在脸，多样性放在景</b> —— 这是合成人台比签约模特强的地方：真人一天拍不出 5 姿 × 4 光，seed 可以。</p>
+</details>
+
+    <details><summary>铸脸流水线 · <code>cast_person()</code>：一次 8 张、¥0.24、先落 sandbox 等人审封版</summary>
+<pre><span class="kw">async def</span> cast_person(preset: FacePreset, tenant: str) -> str:
+    <span class="cm">"""返回 model_code。产物一律先落 sandbox，人眼封版才准升 prod。"""</span>
+    seed = secure_random_seed()                        <span class="cm"># R7：服务端铸，签名里不接受 seed</span>
+    ns   = current_seed_ns(tenant)                     <span class="cm"># '2026AW-v1'</span>
+    base = render_face_sheet(                          <span class="cm"># ① 正面/45°/侧/3-4/微仰 × flat_white</span>
+        preset, seed=seed, views=VIEW_GRID,
+        provider=ProviderRouter.pick(caps=Caps.FACE_SHEET, cost_ceiling=30))
+    embeds = [arcface(v) <span class="kw">for</span> v <span class="kw">in</span> base]
+    d = max(cos(e, FAMOUS_KOL_RIVAL_INDEX) <span class="kw">for</span> e <span class="kw">in</span> embeds)
+    <span class="kw">if</span> d &gt;= 0.55:  <span class="kw">raise</span> DedupHit(retry_with=seed ^ 0x9E3779B1)   <span class="cm"># ② 闸1 撞真人</span>
+    <span class="kw">if</span> nsfw(base) &gt; 0.02 <span class="kw">or</span> watermark_probe(base):
+        <span class="kw">raise</span> CastReject(<span class="st">"nsfw_or_wm"</span>)                            <span class="cm"># ③ 闸2 脏图/带水印</span>
+    sheet = contact_sheet(base, light_set=LIGHT_SET)                  <span class="cm"># ④ 5姿×4光 = 20 格定妆</span>
+    pid = db.insert_person(preset, seed, ns, lineage={                <span class="cm"># ⑤ 血缘一次写全，不许后补</span>
+        <span class="st">"gen_model"</span>: prov.name, <span class="st">"gen_ver"</span>: prov.ver,
+        <span class="st">"prompt_hash"</span>: sha256(prompt), <span class="st">"negative_hash"</span>: sha256(NEG),
+        <span class="st">"face_embed_sha"</span>: sha256(pack(embeds)), <span class="st">"cast_at"</span>: now(),
+        <span class="st">"operator"</span>: ctx.user, <span class="st">"dedup_score"</span>: d, <span class="st">"nsfw_score"</span>: n})
+    <span class="kw">await</span> review_enqueue(pid, kind=<span class="st">"PERSON_GATE"</span>, checklist=[       <span class="cm"># ⑥ 人审 ≈30s/个</span>
+        <span class="st">"像不像能签代言的真人？"</span>, <span class="st">"有没有像某个明星/KOL？"</span>,
+        <span class="st">"牙齿 / 耳廓 / 发际线有无畸变？"</span>, <span class="st">"换 3 件衣服还认得出是她吗？"</span>])
+    <span class="kw">return</span> pid   <span class="cm"># 过审 sandbox→staging；跑满 50 SKU 零客诉 → prod</span></pre>
+<div class="grid g3" style="margin-top:10px">
+  <div class="card"><div class="k">铸一次</div><div class="mtr">¥0.24<small>20 格定妆照</small></div><p>face sheet ¥0.03×8 + 扩光位 ¥0.01×4 + 人审 30s≈¥0.02</p></div>
+  <div class="card"><div class="k">摊到 2000 次后</div><div class="mtr">¥0.0001<small>/张人台成本</small></div><p>对比签约制 ¥3~5 万/季 + 拍棚 ¥8000/天：<b>不是变便宜，是这个成本项被取消了</b></p></div>
+  <div class="card"><div class="k">铸几个够用</div><div class="mtr">12~18<small>个 prod 人台</small></div><p>6 身材桶 × 2~3 气质/肤色。&gt;20 人格就散，&lt;8 个用户觉得"全店同一个人"</p></div>
+</div>
+</details>
+
+    <details><summary>人台路由 · <code>pick_person()</code> 四级收敛（替换原 round_robin_by_hue）</summary>
+<pre><span class="kw">def</span> pick_person(sku, slot=<span class="st">"hero"</span>) -> PersonAsset:
+    <span class="cm">"""前三级全走缓存 → 同 SKU 重出必定同一张脸，这是命中率 +8~12pt 的来源。"""</span>
+    <span class="kw">if</span> p := binding.hard_person(sku, slot):      <span class="kw">return</span> p        <span class="cm"># L0 品牌部硬绑（战役主视觉）</span>
+    <span class="kw">if</span> p := last_used_person(sku, slot, ver_ok=<span class="kw">True</span>): <span class="kw">return</span> p     <span class="cm"># L1 复现优先 ← 最关键的一级</span>
+    cand = pool(body_bucket=sku.fit_bucket, tier=<span class="st">"prod"</span>)            <span class="cm"># L2 身材桶不许串</span>
+    cand = [p <span class="kw">for</span> p <span class="kw">in</span> cand <span class="kw">if</span> deltaE(p.skin_lab, sku.dominant_lab) &gt; 12]  <span class="cm"># 撞色规避</span>
+    <span class="kw">return</span> weighted_min_use(cand) or fallback_nearest_bucket(sku)   <span class="cm"># L3 防"三个爆款脸用到脸盲"</span></pre>
+<div class="callout" style="margin-top:10px">
+<b>① 同 SKU 全平台同脸</b>：淘宝主图 / 抖音切片 / 详情页必须同一 <code>model_code</code>，跨平台认不出 = 品牌资产对内打架，靠 L1 保证不靠人记。<br>
+<b>② 退役不删只冻</b>：<code>tier=retired</code> + <code>ver</code> 只读，老详情页继续用老脸，新上新走新桶。<b>永不 UPDATE 已 prod 的 face_preset</b> —— 那是一次性全店换脸事故。<br>
+<b>③ 换脸 = 换 ver，不是改行</b>：季度焕新铸新桶 → <code>ver+1</code> → 灰度 10% SKU 比 CTR → 赢了再切。<code>seed_ns</code> 已进幂等键，老缓存天然不撞。
+</div>
+</details>
+
+    <details><summary>合规三件套 · AI 人台的法务面（比签约制简单，但一条都不能少）</summary>
+<div class="grid g3">
+  <div class="card"><div class="k">① 撞真人不豁免</div><p style="font-size:13px">"AI 生成的"不是肖像权抗辩，<b>像</b>就够了。闸1 = ANN 查重 + 人审双过，<code>dedup_score</code> 落库留证：被问时能当场掏出"生成时已跑 0.55 阈值筛查"的日志。<br><span class="pill r">必做</span> 名人 / 竞品代言 / KOL 三库比对，<b>季度重扫</b>（公域人脸索引会更新）。</p></div>
+  <div class="card"><div class="k">② AIGC 双标识</div><p style="font-size:13px"><code>synthetic_flag=true</code> 驱动：显式角标「AI 虚拟模特 · 效果仅供参考」<b>锁在模板 <code>role=badge</code> 层，运营拖不走、改不了字</b>；隐式 C2PA + 盲水印在 POSTFX 第⑦步烧进像素（压缩/截图仍可回溯）。<br>跨境：Amazon 服饰图属性声明 AI 生成；Temu 按站挂免责；EU《AI Act》Art.50 机器可读标记。</p></div>
+  <div class="card"><div class="k">③ 文案红线</div><p style="font-size:13px">禁用词表进 <code>auditTemplate()</code> 正则：<b>真实模特 / 实拍模特 / 真人试穿 / 明星同款脸</b>。统一话术：<i>"AI 虚拟模特演绎，版型数据取自实物量体，请以尺码表为准。"</i><br>再压一道：<b>尺码表只许来自实物量体</b>，不许从人台图上反推 —— 这是"图货一致"里唯一会被判虚假宣传的硬项。</p></div>
+</div>
+<div class="callout ok" style="margin-top:10px"><b>反直觉的一条：</b>合成人台<b>不需要</b>授权到期日，但<b>更需要</b>血缘。签约模特的合规靠一份 PDF 合同，合成人台的合规靠"这张脸哪天、用什么模型、什么 seed、什么 prompt 铸的"能一句话答上来。<code>lineage</code> 就是那份合同 —— <b>缺字段 = 无合同</b>。</div>
+    </details>
+  </section>
+
+  <hr>
+
+<!-- ══════════ 05 ══════════ -->
+<section id="s5">
+  <h2><span class="n">05</span>审核状态机 · 8 态，不多一个不少一个</h2>
+  <p class="lead">状态在 <b>Postgres 为主</b>，Redis 只缓存热 job 的进度条。<code>state</code> 是 <code>tryon_job</code> 的一个 <code>enum</code>，<b>转移必须由 <code>try_transition()</code> 单点函数执行</b>——业务代码里出现 <code>job.state = 'READY'</code> 直接打回 PR。</p>
+
+  <div class="sm">
+    <div class="nd s0"><b>DRAFT</b><small>模板/绑定未过检</small></div>
+    <div class="tr">►<b>audit✔</b></div>
+    <div class="nd s1"><b>QUEUED</b><small>已换券·占位扣费</small></div>
+    <div class="tr">►<b>worker 取</b></div>
+    <div class="nd s2"><b>RUNNING</b><small>provider_req_id 已落</small></div>
+    <div class="tr">►<b>4s</b></div>
+    <div class="nd s2" style="border-style:dashed"><b>PREVIEW</b><small>低清回传·子态</small></div>
+    <div class="tr">►<b>done</b></div>
+    <div class="nd s3"><b>POSTFX</b><small>回贴保 logo / ΔE 守卫</small></div>
+    <div class="tr">►<b>入审</b></div>
+    <div class="nd s4"><b>REVIEW</b><small>risk_score 排序</small></div>
+    <div class="tr">►<b>↑过 / ↓打回</b></div>
+    <div class="nd s5"><b>READY</b><small>可导出·进资产库</small></div>
+  </div>
+  <div class="sm" style="margin-top:10px;border-style:dashed">
+    <div class="nd s2"><b>RUNNING</b></div><div class="tr">►<b>429/超时/5xx</b>►</div>
+    <div class="nd s6"><b>RETRY</b><small>exp backoff ≤3 · 不新增扣费</small></div>
+    <div class="tr">►<b>3 次耗尽 / 4xx / 402</b>►</div>
+    <div class="nd s6"><b>DEAD</b><small>死信 · 钉钉 · 可一键转人工</small></div>
+    <div class="tr">►<b>人工修图回灌</b>►</div>
+    <div class="nd s4"><b>REVIEW</b></div>
+    <div class="tr" style="color:var(--tx3)">┈┈ 任意态 ┈►</div>
+    <div class="nd s0"><b>CANCELED</b><small>用户撤/批次停·退占位费</small></div>
+  </div>
+
+  <h4>转移矩阵（合法边只有这 13 条，其余一律 <code>raise IllegalTransition</code>）</h4>
+  <div class="tw"><table>
+    <thead><tr><th>From</th><th>Events → To</th><th>守卫条件（Guard）</th><th>副作用（Side Effect）</th></tr></thead>
+    <tbody>
+      <tr><td><code>DRAFT</code></td><td><code>submit</code> → <b>QUEUED</b></td><td><code>auditTemplate().blocking == []</code> · 人台 <code>lineage</code> 完整且已过相似度查重 · 日预算未撞线</td><td>事务内：<b>占位扣费</b> + 写 <code>cost_ledger(EST)</code> + 算 idem_key + INSERT ON CONFLICT</td></tr>
+      <tr><td><code>QUEUED</code></td><td><code>pick</code> → <b>RUNNING</b><br><code>cancel</code> → <b>CANCELED</b></td><td>租户并发槽 & 卡温 & 批次配额三重未超</td><td>写 <code>provider_req_id</code>（二级幂等）· 开 <code>job_attempt seq=1</code> · 起 15s SLA 计时器（interactive 队列）</td></tr>
+      <tr><td><code>RUNNING</code></td><td><code>preview</code> → <b><i>PREVIEW</i></b>（子态，可逆）<br><code>done</code> → <b>POSTFX</b><br><code>fail</code> → <b>RETRY</b> / <b>DEAD</b></td><td><code>done</code> 需 <code>output.raw</code> 已落 OSS 且 sha256 校验通过</td><td>落 <code>raw</code> 版 <code>output_asset</code> · 记 <code>latency_ms</code> · <b>402→直接 DEAD+熔断</b>；<b>429→RETRY 读 retry-after</b>；4xx 参数错→DEAD 不重试</td></tr>
+      <tr><td><code>RETRY</code></td><td><code>requeue</code> → <b>QUEUED</b>（≤3）<br><code>exhaust</code> → <b>DEAD</b></td><td><code>attempts&lt;3</code> · 退避 <code>2^n±jitter</code> · <b>可换 Provider 但沿用原 seed 与 idem_key</b></td><td><b>不新增 EST 扣费</b>（Leap 失败不计费要如实冲回）；第 3 次自动附 <code>diagnostic.zip</code> 给人</td></tr>
+      <tr><td><code>POSTFX</code></td><td><code>ok</code> → <b>REVIEW</b><br><code>skip</code> → <b>REVIEW</b></td><td>ΔE≤6 且 logo_bbox SSIM≥0.92 → 可 skip；否则必跑</td><td>产 <code>postfx</code> 版 + <code>hotmap.json</code> · 打 <code>aigcMark</code> 隐式水印 · <b>risk_score 在此定稿</b></td></tr>
+      <tr><td><code>REVIEW</code></td><td><code>pass</code> → <b>READY</b><br><code>reject</code> → <b>POSTFX</b>（E1/E2）<br><code>reject</code> → <b>QUEUED</b>（R 换 seed）<br><code>reject</code> → <b>DEAD</b>（F 转人工）</td><td>pass 需 <code>required_badge</code> 在位 · 抽检位命中需二级复核</td><td>append <code>review_log</code>（不可改）· E1/E2 回写 <code>garment.risk_tags</code> ⇒ <b>同款下次自动强制 POSTFX</b> · 打回不额外扣费</td></tr>
+      <tr><td><code>READY</code></td><td><code>export</code> → <b><i>EXPORTED</i></b>（子态）<br><code>recall</code> → <b>DEAD</b></td><td>导出需 <code>template_binding.published_at NOT NULL</code></td><td>服务端 Leafer-Node 出 2×PNG/WebP/热区 · 写资产库 · <b>首出才结算 EST→ACT</b> · 客诉 recall 冻结同 SKU 全部成图</td></tr>
+      <tr><td><b>ANY</b></td><td><code>cancel</code> → <b>CANCELED</b></td><td><code>RUNNING</code> 时先试 <code>provider.cancel()</code>，已出图则不撤</td><td><b>退占位费</b> · 释放并发槽 · SSE 推 <code>canceled</code> 让画布去遮罩</td></tr>
+    </tbody>
+  </table></div>
+
+  <details><summary>Python · 单点转移函数 + Postgres 乐观锁（并发安全，无 INSERT 竞态）<span class="fp">orchestrator/fsm.py</span></summary>
+<pre>FROM_ALLOWED: <span class="ty">dict</span>[<span class="ty">State</span>, <span class="ty">set</span>[<span class="ty">Event</span>]] = { ... }   <span class="cm"># 上表的机器可读版，13 条边</span>
+
+<span class="ty">TERMINAL</span> = {READY, CANCELED, DEAD}
+
+<span class="kw">async def</span> <span class="fn">try_transition</span>(conn, job_id:<span class="ty">int</span>, ev:<span class="ty">Event</span>, *, actor:<span class="ty">str</span>,
+                          payload:<span class="ty">dict</span>|<span class="ty">None</span>=<span class="kw">None</span>, idem:<span class="ty">str</span>|<span class="ty">None</span>=<span class="kw">None</span>) -> <span class="ty">bool</span>:
+    <span class="st">"""唯一允许改 state 的入口。乐观锁 + 合法边校验 + 副作用同事务。"""</span>
+    <span class="kw">async with</span> conn.transaction():                     <span class="cm"># ① 行锁，串行化同 job 的并发事件</span>
+        row = <span class="kw">await</span> conn.fetchrow(
+            <span class="st">"SELECT state, attempts, provider_req_id, cost_est_cent, tenant_id</span>
+            <span class="st">   FROM tryon_job WHERE id=$1 FOR UPDATE"</span>, job_id)
+        <span class="kw">if</span> row[<span class="st">'state'</span>] <span class="kw">in</span> <span class="ty">TERMINAL</span>:                     <span class="cm"># ② 终态幂等：重复 pass/重复 cancel 静默成功</span>
+            <span class="kw">return</span> <span class="kw">False</span>
+        <span class="kw">if</span> ev <span class="kw">not in</span> <span class="ty">FROM_ALLOWED</span>[row[<span class="st">'state'</span>]]:
+            <span class="kw">raise</span> <span class="ty">IllegalTransition</span>(job_id, row[<span class="st">'state'</span>], ev)   <span class="cm"># ③ 非法边 = bug，告警不吞</span>
+
+        nxt = <span class="fn">GUARD</span>[ev](row, payload)                  <span class="cm"># ④ 守卫不过抛 BusinessReject（不告警）</span>
+        <span class="kw">await</span> conn.execute(<span class="st">"UPDATE tryon_job SET state=$1, updated_at=now() WHERE id=$2"</span>, nxt, job_id)
+        <span class="kw">await</span> <span class="fn">SIDE_EFFECT</span>[ev](conn, row, payload, actor, idem)  <span class="cm"># ⑤ 记账/审 log/热区/push 同事务</span>
+        <span class="kw">await</span> conn.execute(<span class="st">"INSERT INTO job_event(job_id,ev,frm,too,actor,at) VALUES($1,$2,$3,$4,$5,now())"</span>,
+                           job_id, ev, row[<span class="st">'state'</span>], nxt, actor)   <span class="cm"># ⑥ 全链路可回放</span>
+    <span class="kw">await</span> <span class="fn">bus.publish</span>(f<span class="st">"job.{job_id}"</span>, <span class="ty">JobEvent</span>(type=nxt, job_id=job_id, ...))  <span class="cm"># ⑦ 事务外推 SSE</span>
+    <span class="kw">return</span> <span class="kw">True</span>
+
+<span class="cm"># ── 三条最容易写错、也最贵的守卫 ──</span>
+<span class="kw">def</span> <span class="fn">g_fail</span>(row, p):
+    <span class="kw">if</span> p[<span class="st">'code'</span>] == <span class="st">'402'</span>:                       <span class="cm"># 没钱 ≠ 网络抖。当重试会连扣三遍告警</span>
+        <span class="fn">circuit_break</span>(row[<span class="st">'provider'</span>], reason=<span class="st">'credit_exhausted'</span>); <span class="kw">return</span> <span class="ty">DEAD</span>
+    <span class="kw">if</span> p[<span class="st">'code'</span>] <span class="kw">in</span> (<span class="st">'429'</span>, <span class="st">'timeout'</span>, <span class="st">'5xx'</span>) <span class="kw">and</span> row[<span class="st">'attempts'</span>] &lt; <span class="nm">3</span>: <span class="kw">return</span> <span class="ty">RETRY</span>
+    <span class="kw">if</span> p[<span class="st">'code'</span>] <span class="kw">in</span> (<span class="st">'400'</span>, <span class="st">'422'</span>, <span class="st">'nsfw'</span>, <span class="st">'sha_mismatch'</span>): <span class="kw">return</span> <span class="ty">DEAD</span>   <span class="cm"># 重试也是错</span>
+    <span class="kw">return</span> <span class="ty">DEAD</span>
+
+<span class="kw">def</span> <span class="fn">g_pass</span>(row, p):                               <span class="cm"># 审核放行：合规件必须在位，否则打不出去</span>
+    <span class="kw">assert</span> p[<span class="st">'required_badge_ok'</span>] <span class="kw">and</span> p[<span class="st">'aigc_mark_ok'</span>], <span class="st">'合规图层缺失，禁止放行'</span>
+    <span class="kw">return</span> <span class="ty">READY</span></pre>
+  </details>
+
+  <div class="note"><span class="lb">三个产品化的"态"，不是技术债</span>
+  <b>① <code>PREVIEW</code> 子态</b>：4 秒回一张 512px 低清，把"6 秒黑屏"变成"看得见的进度"，连点率直接降一个数量级；<br>
+  <b>② <code>REVIEW</code> 是产品功能</b>：它让"图货一致"从口号变成有 SLA、有原因码、有周报的产线环节，退货率守在这；<br>
+  <b>③ <code>DEAD</code> 有专人不自动清</b>：死信队列是<b>模型选型的输入</b>，不是垃圾桶。每周看一次 E1/E4 分布，就是下次换 Provider 的招标文件。</div>
+  <div class="note b"><span class="lb">SLA 与越界保护</span>
+  <code>QUEUED&gt;5min</code> → 前端提示"可切云端引擎加速"（把技术拥堵变成一次 Upsell）；<code>REVIEW&gt;4h</code>（大促期）→ 自动降级为<b>仅站内草稿</b>不上主图，宁可慢不许错；<code>RUNNING&gt;90s</code> → 判僵死，发 <code>cancel</code> 并退费，不许挂着吃并发槽。</div>
+</section>
+
+<hr>
+
+<!-- ══════════ 06 ══════════ -->
+<section id="s6">
+  <h2><span class="n">06</span>成本记账 · 出生就带价，不是月底看账单</h2>
+  <p class="lead">复式记账，<b>四笔一清</b>：<code>EST</code> 占位（提交时）→ <code>ACT</code> 实扣（Provider 回执）→ <code>HIT</code> 免单冲回（缓存命中）→ <code>REF</code> 退款（取消/失败/审核打回）。<b>每个 job 出生即带 <code>cost_est_cent</code>，超日预算在提交前就拦，不是烧完再心疼。</b></p>
+
+  <div class="tw"><table>
+    <thead><tr><th>Provider</th><th>计费单位</th><th>参考价</th><th>Balanced 时延</th><th>特殊坑 → 记账对策</th></tr></thead>
+    <tbody>
+      <tr><td><code>fashn_local</code> 4090/5090</td><td>GPU·秒 → 折算</td><td class="yes">≈ ¥0.05</td><td>8~10s（H100 上 5s）</td><td>电费+折旧要摊，<b>按卡时归集</b>；空转也算钱 ⇒ 记 <code>idle_sec</code> 进团队成本</td></tr>
+      <tr><td><code>fashn_api</code></td><td>1 credit / 张</td><td class="mid">$0.075（Quality 2cr）</td><td>12 / 6 / 4 s 三档</td><td><b>credit 365 天过期</b> ⇒ 月末按到期日排"消耗冲刺"，别让预付烂在账上</td></tr>
+      <tr><td><code>leap</code> 中转</td><td>1 credit / 张</td><td class="mid">$0.105 · <b>失败不计费</b></td><td>~7s</td><td>output 链接 <b>24h 失效</b> ⇒ <code>ACT</code> 时必须 <code>GET→OSS</code> 落盘，否则账在、图没了</td></tr>
+      <tr><td><code>aliyun_outfit</code></td><td>次</td><td>按百炼刊例 + <code>parsing</code> 另计</td><td>~6s</td><td>唯一 <code>local_swap</code> ⇒ 按<b>能力溢价</b>记账，不许和裸跑比单价（比错了会砍掉刚需）</td></tr>
+      <tr><td><code>volc_3.0</code></td><td>张</td><td>¥0.2（超清 ¥0.4）</td><td>~9s</td><td>只用于换背景/场景裂变，<b>科目分开</b>：<code>vton</code> vs <code>scene</code>，不然老板以为试衣涨了 4 倍</td></tr>
+      <tr><td><b>缓存命中</b></td><td>—</td><td class="yes">¥0（记 <code>HIT</code> 冲回）</td><td>&lt;100ms</td><td><b>这一列就是你给客户报价时敢让 30% 的底气</b>，必须单独出报表</td></tr>
+    </tbody>
+  </table></div>
+
+  <details open><summary>DDL · <code>cost_ledger</code> 幂等双写 + 预算闸门（<code>UNIQUE(job_id, entry_type)</code> 是防双扣的最后一道闸）<span class="fp">migrations/0005_ledger.sql</span></summary>
+<pre><span class="kw">CREATE TYPE</span> <span class="ty">ledger_type</span> <span class="kw">AS ENUM</span> (<span class="st">'EST'</span>,<span class="st">'ACT'</span>,<span class="st">'HIT'</span>,<span class="st">'REF'</span>,<span class="st">'OVR'</span>);  <span class="cm">-- OVR=人工修图外包</span>
+
+<span class="kw">CREATE TABLE</span> cost_ledger (
+  id           <span class="ty">bigserial</span> <span class="kw">PRIMARY KEY</span>,
+  tenant_id    <span class="ty">bigint</span> <span class="kw">NOT NULL</span>,
+  job_id       <span class="ty">bigint</span> <span class="kw">NOT NULL REFERENCES</span> tryon_job(id),
+  entry_type   <span class="ty">ledger_type</span> <span class="kw">NOT NULL</span>,
+  provider     <span class="ty">text</span> <span class="kw">NOT NULL</span>,
+  sku_id       <span class="ty">text</span>,
+  cost_cent    <span class="ty">int</span> <span class="kw">NOT NULL</span>,                 <span class="cm">-- 正数=花出，REF/HIT 存负数，一眼可读</span>
+  unit_price   <span class="ty">int</span> <span class="kw">NOT NULL</span>,
+  qty          <span class="ty">numeric</span>(<span class="nm">8</span>,<span class="nm">3</span>) <span class="kw">NOT NULL DEFAULT</span> <span class="nm">1</span>,   <span class="cm"># local 走 GPU 秒：qty=6.42s</span>
+  gpu_sec      <span class="ty">numeric</span>(<span class="nm">8</span>,<span class="nm">3</span>),
+  batch_id     <span class="ty">bigint</span>,  cost_center <span class="ty">text</span>,  campaign <span class="ty">text</span>,   <span class="cm"># ★ 财务要的三个维度</span>
+  provider_req_id <span class="ty">text</span>,                    <span class="cm"># 和供应商对账的唯一抓手</span>
+  idempotency_key <span class="ty">text</span> <span class="kw">NOT NULL</span>,            <span class="cm"># = job_id|entry_type，双扣物理不可能</span>
+  at           <span class="ty">timestamptz</span> <span class="kw">NOT NULL DEFAULT</span> now(),
+  <span class="kw">UNIQUE</span> (job_id, entry_type)               <span class="cm"># ← 这行值 3000 块</span>
+);
+<span class="kw">CREATE INDEX</span> led_rollup <span class="kw">ON</span> cost_ledger (tenant_id, cost_center, at::date, provider);
+
+<span class="cm">-- ① 提交时占位（与 job 创建同事务！分开写就会有"有账无 job"的幽灵扣费）</span>
+<span class="kw">INSERT INTO</span> cost_ledger (...,entry_type,cost_cent,idempotency_key,cost_center,campaign)
+  <span class="kw">VALUES</span> (...,<span class="st">'EST'</span>, <span class="fn">price_of</span>(mode,provider), job_id||<span class="st">'|EST'</span>, $cc, $cmp)
+  <span class="kw">ON CONFLICT</span> (job_id, entry_type) <span class="kw">DO NOTHING</span>;
+
+<span class="cm">-- ② 预算闸门：提交前判，不是烧完判。 advisory lock 防并发一起冲线</span>
+<span class="kw">SELECT</span> <span class="fn">pg_advisory_xact_lock</span>(hashtext($tenant||$date));
+<span class="kw">SELECT</span> <span class="fn">spend_today</span> + <span class="fn">queued_est</span> + $this_batch &lt;= daily_cap <span class="kw">AS</span> allowed <span class="kw">FROM</span> quota_daily ...;
+<span class="cm">-- 不允许 ⇒ 201 改成 402 {hint:'今日余 ¥38，可切夜间慢跑省 46%'} ← 拒绝也要给出路</span>
+
+<span class="cm">-- ③ 命中/失败冲回（HIT/REF 存负数，报表直接 SUM 就是净成本）</span>
+<span class="kw">INSERT INTO</span> cost_ledger (...,entry_type,cost_cent,idempotency_key)
+  <span class="kw">VALUES</span> (...,<span class="st">'HIT'</span>, -est_cent, job_id||<span class="st">'|HIT'</span>) <span class="kw">ON CONFLICT DO NOTHING</span>;
+
+<span class="cm">-- ④ 老板每天 9:00 收到的那三行</span>
+<span class="kw">SELECT</span> provider,
+       <span class="fn">sum</span>(cost_cent)::<span class="ty">money</span>                                   <span class="kw">AS</span> net,
+       <span class="fn">count</span>(*) <span class="kw">FILTER</span> (<span class="kw">WHERE</span> entry_type=<span class="st">'HIT'</span>)                   <span class="kw">AS</span> cache_hits,
+       <span class="fn">round</span>(<span class="nm">100.0</span>*<span class="fn">count</span>(*) <span class="kw">FILTER</span> (<span class="kw">WHERE</span> entry_type=<span class="st">'HIT'</span>)/<span class="fn">count</span>(*),<span class="nm">1</span>) <span class="kw">AS</span> hit_pct,
+       <span class="fn">sum</span>(cost_cent)::<span class="ty">float</span>/<span class="kw">NULLIF</span>(<span class="fn">count</span>(*) <span class="kw">FILTER</span>(<span class="kw">WHERE</span> entry_type=<span class="st">'ACT'</span>),<span class="nm">0</span>) <span class="kw">AS</span> cent_per_shot
+<span class="kw">FROM</span> cost_ledger <span class="kw">WHERE</span> at::<span class="ty">date</span>=<span class="fn">today</span> <span class="kw">GROUP BY</span> provider <span class="kw">ORDER BY</span> net <span class="kw">DESC</span>;</pre>
+  </details>
+
+  <div class="grid g4">
+    <div class="card"><div class="k">毛利来源</div><div class="mtr">45%<small>缓存命中=不烧 GPU</small></div><p style="margin-top:6px">同款换人台不重算（L1 复现优先）、同人台换色号只算 garment 分支；<b>合成人台无档期</b>，命中率比签约制高 8~12pt。</p></div>
+    <div class="card"><div class="k">报价底气</div><div class="mtr">¥0.05<small>自托管摊薄单张</small></div><p style="margin-top:6px">对 API 直连同行（¥0.21）敢让 30% 还有肉。</p></div>
+    <div class="card"><div class="k">最贵的一行</div><div class="mtr">402<small>当网络错重试</small></div><p style="margin-top:6px">没钱≠抖动。重试三遍=连扣三次+全员阻塞，必须直落 DEAD 并熔断。</p></div>
+    <div class="card"><div class="k">最容易被忘记</div><div class="mtr">24h<small>Leap 链接寿命</small></div><p style="margin-top:6px">账记了、图没落 OSS，半年后客户要重出详情页，一张都找不回来。</p></div>
+  </div>
+  <div class="note g"><span class="lb">财务/法务三条硬要求，Day 1 就要在</span>
+  ① <strong><code>cost_center + campaign</code> 非空才能投批</strong>（§04 抽屉已拦）——事后再分摊的账没人信；<br>
+  ② <strong><code>provider_req_id</code> 逐笔留存</strong>，供应商账单差异靠它申退，Leap"失败不计费"不主动退，得你去对；<br>
+  ③ <strong>credit 到期日进日历</strong>：FASHN 预付 365 天过期 = 已确认的费用若不用完就是纯损失，月末按到期先后排"清 credit 批次"（清仓款/A-B 测模特最适合当消耗池）。</div>
+</section>
+
+<hr>
+
+<!-- ══════════ 07 ══════════ -->
+<section id="s7">
+  <h2><span class="n">07</span>三队列隔离 + Provider 路由（6 个方法，换引擎不动业务）</h2>
+  <div class="tw"><table>
+    <thead><tr><th>队列</th><th>来源</th><th>并发/卡配额</th><th>SLA</th><th>mode 默认</th><th>超时动作</th></tr></thead>
+    <tbody>
+      <tr><td><code>interactive</code></td><td>门店屏 / C 端试穿 / 设计师点单</td><td><b>预留 30%</b>，永不饿死</td><td class="yes">15s</td><td>Performance(4s)</td><td>降级到<b>同身材同色系缓存模特</b>+提示"为你找了近似款"，不许转圈到流失</td></tr>
+      <tr><td><code>batch</code></td><td>运营批量上新</td><td>吃满剩余，夜间 ×1.6 权重</td><td>无（给 ETA）</td><td>Balanced(6~10s)</td><td>队列 &gt;5min 前端弹"切云端加速？"=<b>把拥堵变 Upsell</b></td></tr>
+      <tr><td><code>postfx</code></td><td>回贴/对齐/ΔE/水印/导出</td><td><b>CPU 池，独立 worker</b></td><td>&lt;3s/张</td><td>—</td><td>绝不与 GPU 任务同池：一张对齐卡住，别拖死 600 张试衣</td></tr>
+    </tbody>
+  </table></div>
+  <details><summary>Provider Protocol + 路由策略（能力位掩码 &gt; 硬编码 if）<span class="fp">orchestrator/providers/base.py</span></summary>
+<pre><span class="kw">class</span> <span class="ty">Caps</span>(<span class="ty">IntFlag</span>):           <span class="cm"># 能力位掩码：路由靠它，不靠 provider 名字字符串</span>
+    FLAT_LAY  = <span class="nm">1</span>&lt;&lt;<span class="nm">0</span>   <span class="cm"># 吃白底平铺图</span>
+    WORN_SHOT = <span class="nm">1</span>&lt;&lt;<span class="nm">1</span>   <span class="cm"># 吃"穿着照"再换（re-context）</span>
+    LOCAL_SWAP= <span class="nm">1</span>&lt;&lt;<span class="nm">2</span>   <span class="cm"># 只换上衣留原裤 ← 只有 OutfitAnyone 有</span>
+    SEG_FREE  = <span class="nm">1</span>&lt;&lt;<span class="nm">3</span>   <span class="cm"># 免 mask</span>
+    PARSING   = <span class="nm">1</span>&lt;&lt;<span class="nm">4</span>   <span class="cm"># 回商品 bbox（热区刚需）</span>
+    INPAINT   = <span class="nm">1</span>&lt;&lt;<span class="nm">5</span>   <span class="cm"># 局部重绘</span>
+    CANCEL    = <span class="nm">1</span>&lt;&lt;<span class="nm">6</span>
+    COMMERCIAL= <span class="nm">1</span>&lt;&lt;<span class="nm">7</span>   <span class="cm"># ★ NC 协议的模型这一位就是 0，路由直接排除，法务不用逐个审</span>
+
+<span class="kw">class</span> <span class="ty">TryOnProvider</span>(<span class="ty">Protocol</span>):
+    <span class="kw">def</span> <span class="fn">submit</span>  (self, person, garment, cat, opts) -> <span class="ty">str</span>: ...   <span class="cm"># → provider_req_id</span>
+    <span class="kw">def</span> <span class="fn">poll</span>    (self, req_id) -> <span class="ty">tuple</span>[<span class="ty">State</span>, <span class="ty">Asset</span>|<span class="ty">None</span>]: ...
+    <span class="kw">def</span> <span class="fn">cancel</span>  (self, req_id) -> <span class="kw">None</span>: ...
+    <span class="kw">def</span> <span class="fn">estimate</span>(self, opts) -> <span class="ty">int</span>: ...                      <span class="cm"># 分，用于报价条 + 预算闸门</span>
+    <span class="kw">def</span> <span class="fn">caps</span>    (self) -> <span class="ty">Caps</span>: ...
+    <span class="kw">def</span> <span class="fn">health</span>  (self) -> <span class="ty">float</span>: ...                      <span class="cm"># 滑窗 P95 + 失败率 + 429 密度 → 0~1 权重</span>
+
+<span class="kw">def</span> <span class="fn">route</span>(req, pool) -> <span class="ty">Provider</span>:
+    ok = [p <span class="kw">for</span> p <span class="kw">in</span> pool
+          <span class="kw">if</span> req.caps &amp; p.<span class="fn">caps</span>() == req.caps          <span class="cm"># ① 能力位必须全满足</span>
+          <span class="kw">and</span> <span class="ty">Caps</span>.COMMERCIAL <span class="kw">in</span> p.<span class="fn">caps</span>()              <span class="cm"># ② 法务硬闸（CatVTON 死在这）</span>
+          <span class="kw">and</span> p.<span class="fn">health</span>() &gt; <span class="nm">0.6</span>                        <span class="cm"># ③ 熔断中的不进</span>
+          <span class="kw">and</span> <span class="fn">quota_left</span>(p) &gt; req.<span class="fn">estimate</span>()]          <span class="cm"># ④ credit/卡时够</span>
+    <span class="kw">if</span> <span class="kw">not</span> ok: <span class="kw">raise</span> <span class="ty">NoCapableProvider</span>(req, hint=<span class="st">'local_swap 仅 OutfitAnyone 支持，可否改为整身换？'</span>)
+    <span class="cm"># ⑤ 成本×健康 加权抽样：便宜的权重高，但抖的就自动让位</span>
+    <span class="kw">return</span> <span class="fn">weighted_pick</span>(ok, w = [p.<span class="fn">health</span>() / <span class="fn">max</span>(p.<span class="fn">estimate</span>(req),<span class="nm">1</span>) ** <span class="nm">0.7</span> <span class="kw">for</span> p <span class="kw">in</span> ok])
+
+<span class="cm"># 溢出规则（写死在 route 里，运营无感）</span>
+<span class="cm">#  local 队列深度 &gt; 400 或 卡温 &gt; 85℃  → 溢出 fashn_api / leap</span>
+<span class="cm">#  interactive 且 P95 &gt; 9s              → 强制 Performance + 优先本地常驻模型</span>
+<span class="cm">#  单 SKU 日预算撞 80%                  → 降 samples=1 + 只出主图板，详情板次日补</span></pre>
+  </details>
+  <div class="note"><span class="lb">半年前你会换模型，这天一定会来</span>
+  按上面这套，接入 v1.6 或别家新模型 = <b>新增一个 <code>class XxxProvider</code>（≈120 行）+ 一行注册 + 一条价格表</b>。<code>tryon_job</code>、幂等键、审核台、成本报表、模板协议<b>一行不改</b>。这就是"编排层是产品"的可验证定义——拿这条去判断你写的到底是不是胶水。</div>
+</section>
+
+<hr>
+
+<!-- ══════════ 08 ══════════ -->
+<section id="s8">
+  <h2><span class="n">08</span>POSTFX 回贴管线 · 最值钱的 200 行</h2>
+  <p class="lead">v1.5 是 mask-free 像素空间生成：<b>人体、光影、褶皱、体积它极强；胸口小 logo、印花、条纹间距它必漂。</b>所以模型直出永远不是终稿。这一步把"AI 素材"变成"可上架商品图"，也是你敢对品牌方承诺图货一致的唯一依据。</p>
+
+  <div class="stack" style="gap:8px">
+    <div class="layer l3" style="grid-template-columns:44px 1fr"><div class="who" style="text-align:center">①</div><div class="what"><b>v1.5 出 576×864 raw</b> —— 只信它的人体与光影，不信它的字。<span class="cm" style="font-family:var(--mono);font-size:11.5px">output_asset(kind=raw) 永久留存，任何时候可重跑 POSTFX 不用再花钱</span></div></div>
+    <div class="layer l3" style="grid-template-columns:44px 1fr"><div class="who" style="text-align:center">②</div><div class="what"><b>取 garment mask</b> —— <code>aitryon-parsing-v1</code> 或 SCHP，feather <code>6~12px</code>；同时吐 <b>bbox → role=hotspot</b>（顺手把详情页可点击热区做了，报价翻倍就在这）</div></div>
+    <div class="layer l3" style="grid-template-columns:44px 1fr"><div class="who" style="text-align:center">③</div><div class="what"><b>平铺图对齐</b> —— <code>TPS 薄板样条</code>（关键点=领口/袖口/下摆/侧缝）+ <code>ORB 精配</code>；印花类加<b>频域相位校准</b>修条纹间距</div></div>
+    <div class="layer l3" style="grid-template-columns:44px 1fr"><div class="who" style="text-align:center">④</div><div class="what"><b>分频混合（核心 30 行）</b> —— <code>L = 模型的低频（光影/体积）</code> × <code>C = 平铺图的高频（印花/logo/纱线）</code> ⇒ <b>保住 logo，不丢立体感</b>。纯 multiply 会把暗部糊死，别偷懒</div></div>
+    <div class="layer l3" style="grid-template-columns:44px 1fr"><div class="who" style="text-align:center">⑤</div><div class="what"><b>缝边</b> —— mask 边缘 3px <code>wrap-around shadow</code> + 轻微法线扰动，藏掉"贴上去"的塑料感；皮肤侧做 <code>色溢(spill)</code> 抑制</div></div>
+    <div class="layer l3" style="grid-template-columns:44px 1fr"><div class="who" style="text-align:center">⑥</div><div class="what"><b>ΔE 守卫</b> —— 对 <code>garment.base_color_lab</code> 算 <code>ΔE2000</code>：<code>≤6 放行</code> / <code>6~10 局部色相旋转拉回</code> / <code>&gt;10 打回 E3</code>（色差是"图不符实"投诉第一名）</div></div>
+    <div class="layer l1" style="grid-template-columns:44px 1fr"><div class="who" style="text-align:center">⑦</div><div class="what"><b>回写画布（架构的接缝，也是最爽的一下）</b> —— <code>layer.setAttr('image.url', postfxUrl)</code>：GzmDesign 的<b>蒙版、内外阴影、混合模式、描边、画板裁切全部原样保住</b>。AI 出的是素材，画布出的才是商品图</div></div>
+    <div class="layer l1" style="grid-template-columns:44px 1fr"><div class="who" style="text-align:center">⑧</div><div class="what"><b>服务端出片</b> —— <code>leafer-node</code> + <code>sharp</code>：1×1 PNG(2×) 主图 · 3×4 WebP q86 详情 · 9×16 直播贴片 · <code>pdp_hotspots.json</code> 侧车 · <b>AIGC 隐式水印 + 角标免责语（合规必挂，<code>required=true</code> 不可删）</b></div></div>
+  </div>
+
+  <details><summary>OpenCV 骨架 · 分频回贴 + ΔE 守卫（可直接跑，注释里是调参经验）<span class="fp">orchestrator/postfx.py · ≈180 行</span></summary>
+<pre><span class="kw">def</span> <span class="fn">postfx</span>(raw:<span class="ty">np.ndarray</span>, flatlay:<span class="ty">np.ndarray</span>, mask:<span class="ty">np.ndarray</span>,
+           g:<span class="ty">GarmentAsset</span>, feat:<span class="ty">GarmentFeat</span>) -> <span class="ty">PostFXResult</span>:
+    H, W = raw.shape[:<span class="nm">2</span>]
+    <span class="cm"># ③ 对齐：TPS 主形变（领/袖/摆/缝 8~12 点对）+ ORB 残差精配</span>
+    M = <span class="fn">tps_warp</span>(flatlay, feat.kps_src, <span class="fn">project_kps</span>(feat.kps_ref, raw.shape))
+    M = <span class="fn">orb_refine</span>(M, raw, g.logo_bbox)                      <span class="cm"># 有印花时这步能救回 1~2px</span>
+    <span class="kw">if</span> <span class="st">'stripe'</span> <span class="kw">in</span> g.risk_tags: M = <span class="fn">phase_align_stripes</span>(M, raw, flatlay, mask)  <span class="cm"># E2 专治</span>
+
+    <span class="cm"># ④ 分频：σ=7 在 576×864 上约等于"光影 vs 印花"的分界，别照抄到大图</span>
+    ai_l  = <span class="fn">gauss</span>(raw, <span class="nm">7</span>);   ai_h  = raw - ai_l
+    fl_l  = <span class="fn">gauss</span>(M,   <span class="nm">7</span>);   fl_h  = M - fl_l
+    <span class="cm">#   低频取 AI（立体感） · 高频取平铺（logo/纱线） · 高频权重按 mask 衰减</span>
+    w     = <span class="fn">feather</span>(mask, px=<span class="nm">9</span>)[..., <span class="kw">None</span>] / <span class="nm">255</span>
+    <span class="kw">if</span> g.logo_bbox: w = <span class="fn">boost_in</span>(w, g.logo_bbox, gain=<span class="nm">1.0</span>, radius=<span class="nm">6</span>)   <span class="cm"># logo 区 100% 用原图</span>
+    out = ai_l + (<span class="nm">0.92</span>*ai_h*(<span class="nm">1</span>-w) + <span class="nm">1.04</span>*fl_h*w)                <span class="cm"># 1.04 微提纹理，压住"塑料感"</span>
+
+    <span class="cm"># ⑤ 缝边：沿 mask 内缩 3px 加方向性阴影，模拟布料包裹</span>
+    out = <span class="fn">edge_wrap</span>(out, mask, width=<span class="nm">3</span>, strength=<span class="nm">0.18</span>, light=<span class="fn">est_light_dir</span>(raw))
+    out = <span class="fn">spill_suppress</span>(out, mask, skin_ref=<span class="fn">sample_skin</span>(raw, mask), k=<span class="nm">0.35</span>)
+
+    <span class="cm"># ⑥ ΔE2000 守卫：不过就就地拉回，别指望审核员用眼睛救色差</span>
+    lab, base = <span class="fn">rgb2lab</span>(<span class="fn">mean_in</span>(out, <span class="fn">erode</span>(mask,<span class="nm">5</span>))), g.base_color_lab
+    dE = <span class="fn">deltaE2000</span>(lab, base)
+    <span class="kw">if</span>   dE &gt; <span class="nm">10</span>: <span class="kw">return</span> <span class="ty">PostFXResult</span>(out, need_review=<span class="kw">True</span>, reason=<span class="st">'E3'</span>, dE=dE)
+    <span class="kw">elif</span> dE &gt; <span class="nm">6</span>: out = <span class="fn">hue_preserving_pull</span>(out, mask, lab, base, amt=<span class="nm">0.75</span>)
+
+    <span class="cm"># logo 保真硬校验：SSIM&lt;0.92 直接判 E1，不许过审</span>
+    s = <span class="fn">ssim</span>(<span class="fn">crop</span>(out,g.logo_bbox), <span class="fn">crop</span>(M,g.logo_bbox))
+    <span class="kw">return</span> <span class="ty">PostFXResult</span>(out, need_review=(s&lt;<span class="nm">0.92</span>), reason=<span class="st">'E1'</span> <span class="kw">if</span> s&lt;<span class="nm">0.92</span> <span class="kw">else</span> <span class="kw">None</span>,
+                          dE=dE, logo_ssim=s, hotspot=<span class="fn">bbox_of</span>(mask))</pre>
+  </details>
+  <div class="note b"><span class="lb">V1 别上"AI 审核 AI"</span>
+  用一个 VLM 去判"图和货一不一致"，听起来优雅，实际会<b>误杀爆款</b>——它不认识你家的品牌字标，会把正确印花判成变形。<b>V1 就用上面这套确定性规则（ΔE + SSIM + 频域能量 + 印花面积），可解释、可调参、出事能复盘。</b>等攒够 2 万条 <code>review_log</code>，再拿它训一个只做<b>排序</b>（不是判决）的小模型，把人工从全检降到抽检 10%。</div>
+</section>
+
+<hr>
+
+<!-- ══════════ 09 ══════════ -->
+<section id="s9">
+  <h2><span class="n">09</span>前后端契约 · 6 个端点，前端不许有第二个 fetch 入口</h2>
+  <div class="tw"><table>
+    <thead><tr><th>方法 & 路径</th><th>请求 / 响应要点</th><th>语义与坑</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST /api/jobs/estimate</code></td><td>in: <code>{layers[], rows[], policy}</code> → out: <code>{total, hits, run, cent, etaSec, provider, blocked[]}</code></td><td><b>纯计算，不落库、不扣费。</b>驱动 §01① 的费用确认条。<code>blocked[]</code> 带行号与中文原因，前端直接渲染成红字</td></tr>
+      <tr><td><code>POST /api/jobs</code></td><td>in: <code>idemKey, personId, garmentSku, category, mode, seed, segFree, cbRef, batchId, costCenter, campaign</code> → <b>201</b> <code>{jobId, cacheHit, estCent, pos}</code></td><td>事务内：<code>ON CONFLICT(idem_key)</code> + <code>EST</code> 记账 + 预算闸门。<b>撞预算返 402 并带 <code>hint</code> 给出路</b>；命中缓存直接返 <code>cacheHit:true</code>，前端不给排队动画</td></tr>
+      <tr><td><code>GET /api/jobs/{id}/events</code> <span class="pill">SSE</span></td><td><code>queued|running|preview|postfx|review|ready|retry|failed|quota|canceled</code></td><td><code>Last-Event-ID</code> 断线续传；<b>15s 心跳</b>防 Nginx 掐；同 jobId 重复订阅复用同一上游（前端 <code>ai.subscribe()</code> 已幂等）</td></tr>
+      <tr><td><code>POST /api/jobs/{id}:act</code></td><td><code>{act: 'cancel'|'reroll'|'reroute'|'manual', seed?, provider?, reasonCode?}</code></td><td>审核台与红角标共用。<code>reroll</code> 换 seed ⇒ <b>新 idem_key（真花钱）</b>；<code>reroute</code> 沿用 seed 与 key ⇒ 不重复扣费</td></tr>
+      <tr><td><code>POST /api/reviews:batch</code></td><td><code>{items:[{jobId, verdict:'pass'|'reject', reasonCode?, note?}]}</code></td><td>键盘流 200ms 防抖成批；<b>append-only</b>；E1/E2 自动回写 <code>garment.risk_tags</code>；返回下一批 <code>risk_score</code> 排序结果</td></tr>
+      <tr><td><code>POST /api/batches/{id}:export</code></td><td>in: <code>{boards[], fmts[], hotmap:true}</code> → <code>202 {exportId}</code> → 完成回调给下载券（<b>15 min 短链</b>）</td><td>服务端 <code>leafer-node</code> 渲染。<b>只导 <code>published</code> 模板 + 只导 <code>READY</code> job</b>，未审的一张都别想溜出去</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><span class="lb">两条契约纪律</span>
+  ① <b>前端永远不 import 任何 Provider SDK</b>，只认这 6 个路径。哪天你把 FASHN 换成自研，前端 0 改动——这条写进 eslint <code>no-restricted-imports</code>；<br>
+  ② <b>所有写接口强制 <code>Idempotency-Key</code> 头</b>（网关层缺头直接 400）。连"审核放行"都要幂等，因为键盘流双击 <code>↑</code> 太容易了，而放行会触发结算 <code>EST→ACT</code>，双放=双结算。</div>
+</section>
+
+<hr>
+
+<!-- ══════════ 10 ══════════ -->
+<section id="s10">
+  <h2><span class="n">10</span>两周排期 · 14 人日 · 带 3 道闸门</h2>
+  <div class="grid g2">
+    <div>
+      <div class="tl">
+        <div class="it"><div class="d">W1-D1 · BE <span class="gate">闸门 A：翻车率</span></div><div class="t">权重落地 + 4090 CLI 跑通基线</div><div class="x">20 个真实 SKU × 5 类高危：<b>印花 / 条纹 / 胸口小 logo / 深 V / 白婚纱</b>各 4 张，人工盲评。<b>翻车率 &gt;30% ⇒ 本期只开"内部出图 + 强制 POSTFX"，不许上 C 端实时试穿</b>，否则客服会被"图和实物不一样"淹掉。</div></div>
+        <div class="it"><div class="d">W1-D2 · BE</div><div class="t">9 张表 DDL + 迁移 0001~0005</div><div class="x">重点验 <code>ON CONFLICT</code> 两条唯一键（idem / provider_req）真的挡得住并发：写个 50 协程轰同一 key，<b>库里必须只出 1 行、只记 1 笔 EST</b>。</div></div>
+        <div class="it"><div class="d">W1-D3 · BE</div><div class="t">三队列 + FSM 单点函数 + 死信</div><div class="x"><code>try_transition()</code> 13 条边单测全覆盖；<b>402 / 429 / 4xx 三分支各写一条"必须这样"的断言测试</b>；<code>interactive</code> 预留槽压测不被 batch 饿死。</div></div>
+        <div class="it"><div class="d">W1-D4 · BE</div><div class="t"><code>TryOnProvider</code> + <code>fashn_local</code> 实现</div><div class="x">DWPose/SCHP 预热常驻（别每请求加载 onnx，那 3 秒会吃掉你一半 SLA）；bf16 走 Ampere+；输出直落 OSS 并校验 sha256。</div></div>
+        <div class="it"><div class="d">W1-D5 · BE <span class="gate">闸门 B：单张成本</span></div><div class="t">缓存命中 + 记账 + 日报 9:00</div><div class="x">跑 300 张混合批次，<b>命中率 &lt;30% 就回去改 <code>visual_hash</code> 口径</b>（多半是把 price 图层算进去了）；报表 <code>cent_per_shot</code> 必须 ≤ ¥0.06，不然 4090 的账没摊对。</div></div>
+      </div>
+    </div>
+    <div>
+      <div class="tl">
+        <div class="it"><div class="d">W2-D1 · BE+CV</div><div class="t">POSTFX 回贴（§08 ①~⑥）</div><div class="x">先只做 <code>has_print</code> + <code>stripe</code> 两类，ΔE/SSIM 两个守卫出数。<b>验收：10 张印花款，logo SSIM 全 ≥0.92，ΔE 全 ≤6。</b></div></div>
+        <div class="it"><div class="d">W2-D2 · FE</div><div class="t">改造 ①②：AiPanel + layerMeta + auditTemplate</div><div class="x">顺手把 4 个上游坏点修了（复制 / 显隐 / <code>fontGuard()</code> / 撤销栈收 AI 改图）。<b>字体这步不做完，服务端出片必豆腐块。</b></div></div>
+        <div class="it"><div class="d">W2-D3 · FE</div><div class="t">改造 ③：SSE + 热替换 + 时间线回滚</div><div class="x">断网 30s 重连不丢事件（<code>Last-Event-ID</code>）；4s 内必出 preview；生成中画布不锁。</div></div>
+        <div class="it"><div class="d">W2-D4 · FE</div><div class="t">改造 ④⑤：BatchDrawer + ReviewBench</div><div class="x">600 行 TSV 预检 ≤2s；报价条与后端 <code>/estimate</code> 差 ≤1 分；审核台盲测 100 张（埋雷 12）漏放 ≤1、误杀 ≤3。</div></div>
+        <div class="it"><div class="d">W2-D5 · 全员 <span class="gate">闸门 C：端到端</span></div><div class="t">服务端出片 + 20 SKU 全流程 + 第一张成本报表</div><div class="x"><b>DoD：</b>粘 TSV → 预检 → 报价 → 投批 → SSE → POSTFX → 键盘审 → 导出 1×1/3×4/9×16 + <code>pdp_hotspots.json</code> → 报表自动出。<b>中间不许有人打开终端。</b></div></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>验收指标（写进 sprint goal，周日对数字不对感觉）</h3>
+  <div class="grid g4">
+    <div class="card"><div class="k">质量</div><div class="mtr">≥92%<small>一次过审率（无 POSTFX 直过）</small></div><p style="margin-top:6px">印花/条纹类单列统计，不许用纯色 T 恤把均值刷好看。</p></div>
+    <div class="card"><div class="k">效率</div><div class="mtr">40min<small>600 张审核耗时 / 人</small></div><p style="margin-top:6px">键盘流 + risk 排序 + 抽检 10%，不是全检。</p></div>
+    <div class="card"><div class="k">成本</div><div class="mtr">¥0.05<small>净单张（含命中冲回后）</small></div><p style="margin-top:6px">API 混合兜底场景 ≤ ¥0.09，超了先查命中率再查卡利用率。</p></div>
+    <div class="card"><div class="k">体验</div><div class="mtr">4s<small>首帧 preview 时延 P95</small></div><p style="margin-top:6px">连点率（同图层 10s 内重复提交） &lt; 3%，这是焦虑的量化替代指标。</p></div>
+  </div>
+</section>
+
+<hr>
+
+<!-- ══════════ 11 ══════════ -->
+<section id="s11">
+  <h2><span class="n">11</span>红线 · <b>七条</b>，踩一条就够赔一年 <span class="pill">R7 为合成人台新增</span></h2>
+  <div class="tw"><table>
+    <thead><tr><th>#</th><th>红线</th><th>后果</th><th>机制（不靠自觉）</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill r">R1</span></td><td><b>CatVTON / IDM-VTON / OOTDiffusion 进生产</b>——star 最高、教程最多、效果也香，但 CC BY-NC-SA，且训练集 VITON-HD 本身非商用</td><td>律师函 + 已收 SaaS 费全额退，开源电商圈第一暴雷姿势</td><td><code>Caps.COMMERCIAL</code> 位为 0 的 Provider <b>路由层直接排除</b>；CI 加 license 扫描（<code>license-checker</code> + 权重 REUSE），NC 依赖进 <code>denyList</code> 直接挂流水线</td></tr>
+      <tr><td><span class="pill r">R2</span></td><td><b>前端 <code>Promise.all</code> 并发打模型</b></td><td>第一个请求打爆 Provider 限流，同时浏览器内存起飞，运营以为"卡了"再点五下 = 五份钱</td><td>eslint 禁 <code>src/ai/</code> 外出现 fetch；<code>api.ts</code> 是唯一出口且<b>只返回 jobId</b>，物理上没有并发打模型的写法</td></tr>
+      <tr><td><span class="pill r">R3</span></td><td><b>只存签名 URL 不落文件</b>（Leap 24h 失效 / FASHN credit 365 天过期）</td><td>半年后客户要重出详情页，账在、图没了；预付 credit 烂在账上=纯损失</td><td><code>ACT</code> 记账与 <code>GET→OSS</code> 落盘<b>同一事务</b>，落盘失败则 job 不进 REVIEW；credit 到期日进日历，月末排"清 credit 批次"</td></tr>
+      <tr><td><span class="pill r">R4</span></td><td><b>缓存跨租户命中</b></td><td>A 品牌的款出现在 B 品牌后台 = 事故级泄密</td><td><code>tenant_id</code> 进 idem_key <b>且</b>进查询 WHERE（双保险，不许只做一层）；缓存读必须带 tenant 断言</td></tr>
+      <tr><td><span class="pill r">R5</span></td><td><b>402 当网络错误重试 / 字体没内嵌就上线</b></td><td>前者连扣三次+全员阻塞；后者 600 张主图变宋体或豆腐块，全批报废</td><td><code>g_fail</code> 里 402 直落 DEAD + 熔断；<code>auditTemplate()</code> 把"未内嵌字体"列 <b>blocking</b>，<code>fontGuard()</code> 启动时自检 Nginx MIME/CORS</td></tr>
+      <tr><td><span class="pill r">R6</span></td><td><b>合成人台"撞真人脸" &amp; AIGC 标识缺失</b></td><td>生成脸与真人相似度过高 → 肖像权索赔（<b>"AI 生成的"不构成抗辩，"像"就够了</b>）；国内未按《AI 生成合成内容标识办法》打标；Temu/Amazon/EU 各站 AIGC 声明缺失 → 整店下架</td><td>入库<b>三道闸</b>：ArcFace 对「公域名人 + 竞品代言 + KOL」三库余弦 &lt; 0.55、NSFW&lt;0.02 + 水印探针、<code>lineage</code> 缺任一字段<b>禁止升 prod</b>；<code>role=badge</code> 免责语 <code>required=true &amp; locked=true</code>（运营拖不走改不了）；禁用词表进 <code>auditTemplate()</code>；季度重扫名人索引</td></tr>
+      <tr><td><span class="pill r">R7</span></td><td><b>把 <code>seed</code> 当可选项</b> / 直接改已 prod 的 <code>face_preset</code></td><td>人台不可复现 → 老详情页重出时<b>脸变了</b> → 品牌资产每次重跑都在蒸发；改一行 = 全店一次性换脸事故，且无法回滚</td><td><code>person_asset.seed</code> / <code>seed_ns</code> <b>NOT NULL</b> 且<b>服务端铸、前端禁传</b>；<code>ver</code> 只读冻结，换脸一律 <code>ver+1</code> 灰度；pipeline 升级只开新 <code>seed_ns</code>，老 ns 置只读</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="note g"><span class="lb">最后一句判断</span>
+  这套东西里，<b>GzmDesign 是 0 元，FASHN v1.5 是 6 秒，PostFX 是 200 行</b>——都不是壁垒。真正的壁垒是三样攒出来的东西：<code>review_log</code> 里那几万条打回原因、<code>cost_ledger</code> 里那条向下走的 <code>cent_per_shot</code> 曲线、<code>garment_asset.risk_tags</code> 里你家每个 SKU 的脾气。<b>所以 Day 1 就把这三张表当产品写，别当日志写。</b>日志可以后补，资产补不回来。</div>
+</section>
+
+<footer>
+  <span>电商 AI 试衣出图台 · 开工设计稿 v1.1 · 人台=AI 合成（不签约/不接供应商）· 2026-11-18 · GzmDesign × FASHN VTON v1.5 × Orchestrator</span>
+  <span>5 处 FE 改造 · 9 张表 · 13 条状态边 · 6 个端点 · 3 道闸门 · 14 人日</span>
+</footer>
+
+</div>
+<script>
+// nav 高亮 + 锚点平滑（无依赖）
+const links=[...document.querySelectorAll('nav a')];
+const map=new Map(links.map(a=>[a.getAttribute('href').slice(1),a]));
+const io=new IntersectionObserver(es=>{
+  es.filter(e=>e.isIntersecting).forEach(e=>{
+    links.forEach(l=>l.classList.remove('on'));
+    map.get(e.target.id)?.classList.add('on');
+  });
+},{rootMargin:'-72px 0px -68% 0px'});
+document.querySelectorAll('section').forEach(s=>io.observe(s));
+// 代码块点击折叠全部/展开（Alt+Click summary 切全部）
+document.querySelectorAll('summary').forEach(s=>s.addEventListener('dblclick',()=>{
+  const open=s.parentElement.open;
+  document.querySelectorAll('details').forEach(d=>d.open=!open);
+}));
+</script>
+</body>
+</html>

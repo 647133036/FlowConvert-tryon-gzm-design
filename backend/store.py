@@ -294,6 +294,10 @@ def delete_base(base_id: str) -> None:
 
 def create_job(payload: dict) -> dict:
     def _add(state: dict):
+        try:
+            _prio = int(payload.get("prio", 1))
+        except (TypeError, ValueError):
+            _prio = 1
         job = {
             "id": uid("job"),
             "status": "queued",
@@ -304,12 +308,15 @@ def create_job(payload: dict) -> dict:
             "garment_type": payload.get("garment_type", "upper"),
             "output_format": payload.get("output_format", "jpg"),
             "background": payload.get("background", state["settings"]["background"]),
+            "platform": payload.get("platform", "none"),
             "sku": payload.get("sku", ""),
             "title": payload.get("title", ""),
             "prompt": payload.get("prompt", ""),
             "source_name": payload.get("source_name", ""),
             "source_url": payload.get("source_url", ""),
             "bound_store_id": payload.get("bound_store_id", ""),
+            # §07 队列折叠: prio 0=interactive(永不饿死) / 1=batch / 2=postfx。
+            "prio": _prio,
             "result_url": "",
             "preview_url": "",
             "progress": 0,
@@ -347,14 +354,23 @@ def list_jobs() -> list[dict]:
 
 def claim_next_job() -> dict | None:
     def _claim(state: dict):
+        best = None
         for item in state["jobs"]:
-            if item["status"] == "queued":
-                item["status"] = "running"
-                item["progress"] = 5
-                item["message"] = "Worker claimed, processing started"
-                item["updated_at"] = _now()
-                return copy.deepcopy(item)
-        return None
+            if item["status"] != "queued":
+                continue
+            # §02 INDEX(state, prio, created_at): 交互任务不被批量饿死。
+            if best is None or (item.get("prio", 1), item.get("created_at", 0)) < (
+                best.get("prio", 1),
+                best.get("created_at", 0),
+            ):
+                best = item
+        if best is None:
+            return None
+        best["status"] = "running"
+        best["progress"] = 5
+        best["message"] = "Worker claimed, processing started"
+        best["updated_at"] = _now()
+        return copy.deepcopy(best)
 
     return with_state(_claim)
 
@@ -473,3 +489,23 @@ def stats() -> dict[str, Any]:
         "failed": sum(1 for j in jobs if j["status"] == "failed"),
         "bases": len(list_bases()),
     }
+
+
+def _recover_stuck_jobs() -> None:
+    """启动恢复:上次进程异常退出(被 kill/OOM/崩溃)时,running 任务会永久卡死。
+
+    - running → failed(附中断原因),用户可重新提交;
+    - queued 保持不动,worker 启动后照常 claim 重跑。
+    """
+
+    def _mark(state: dict) -> None:
+        for job in state["jobs"]:
+            if job.get("status") == "running":
+                job["status"] = "failed"
+                job["updated_at"] = _now()
+                job["message"] = "Interrupted: backend restarted before completion"
+
+    with_state(_mark)
+
+
+_recover_stuck_jobs()

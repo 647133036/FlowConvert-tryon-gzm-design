@@ -2,7 +2,65 @@
 
 This file records user instructions, preferences, and teachings for reference in future interactions.
 
-## Format
+[r14 delta_row 爬坡平滑验证通过]
+- Date: 2026-11-18
+- Context: Discovered by Agent while running r14 GPU round after patching anchor_ref_local
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - r14 GPU 验证: anchor1_out 贴回区(行 664..973) delta 逐行最大步长 2.0 @ row 806, r13 同位置 max_step=71.0 @ row 693, 跳变基本消除
+  - anchor1_out delta 范围 111..148 (r13 为 58..151), 贴回区局部锚定保持
+  - shoulder1_info.json changed_px_abs=0 (与 r13 一致, 肩部贴合是生成层缺陷, POSTFX 无法修)
+  - core band step max 指标(行带 648..1305 全量) = 176, 但这是 final 全图相邻行差, 含 REAPPLY 等后处理层, 非 anchor_ref_local 单函数输出; 贴回区内 delta 跳变须看 anchor1_out - tone1_matched_ref
+  - s0_fashn_raw 是 768x576, final_2048 是 2048x1536, 对比前须 resize gen 到 final 尺寸
+  - r15 图已输出到 /workspace/r14_review/ (r15_final_RAW.png) 供用户视觉验收
+
+[r15 RAW 直出验证]
+- Date: 2026-11-18
+- Context: Discovered by Agent while running r15 GPU round with VTON_POSTFX=0
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - r15 VTON_POSTFX=0 验证: final_2048.png == s0_fashn_raw.png (md5 一致), 576x768 原生直出, 无 resize 到 2048
+  - 元数据: lock_identity=False, detail_applied=False, print_fidelity=None (POSTFX 链路全跳过, 符合预期)
+  - 跑时 31.8s (r14 POSTFX=1 全链路 64.9s, RAW 直出省一半时间)
+  - 冒烟 smoke 因 FASHN 权重缺失仍 rc=1 (与 r14 一致, 冒烟检查的是本地 FASHN 权重路径, 与 POSTFX 无关)
+
+[RAW 交付档升级: CPU 放大 + review 落库]
+- Date: 2026-11-18
+- Context: 用户拍板 r15 RAW 直出可作为交付档位, 但 SKU 像素下限需后续 CPU 放大(GzmDesign 调 /api/tryon 编排)
+- Category: Operations & Deployment
+- Instructions:
+  - VTON_POSTFX=0 从纯调试开关升级为可交付档位(commit e5a4eb8): 跳过 POSTFX 全链路(净负)后,
+    仍做 CPU Lanczos 等比放大到 long_side(SKU 像素下限), 只做放大不缩小(长边已达标保持原样), 不做印花核心直贴
+  - 元数据 postfx=raw + delivery_tier=review(RAW 无印花保真分, 走人工视觉验收); worker 把 postfx 档位落库
+  - 编排链: GzmDesign AiPanel.vue 调 /api/tryon → 编排层幂等(seed_ns+pipeline_ver) → FASHN(raw)
+    → CPU 放大到 long_side → REVIEW 状态回写图层, 运营点"采用"才推 PROD
+  - 注意: 工作区前端是 vanilla-JS SPA(src/main.js), GzmDesign AiPanel.vue 在用户独立前端仓, 本次只落后端编排层
+
+[5 条换衣管线 provider 注册表]
+- Date: 2026-11-18
+- Context: 用户要求电商换衣统一 5 管线: FASHN / SDXL / 阿里云百炼 / VIAPI / 第三方预留
+- Category: Operations & Deployment
+- Instructions:
+  - 百炼 + VIAPI 都走同一 aidge 端点(aidge.aliyuncs.com), 换 model 名区分(用户拍板):
+    百炼 aitryon 系 = aitryon / aitryon-plus / aitryon-refiner; VIAPI 默认同 aitryon
+  - VTON_PROVIDER 选 aidge / viapi / third_party 均映射 aidge 端点, VTON_PROVIDER_MODEL 可覆盖 model 名;
+    model 名进幂等键 generation_mode(换模型=换出图, 缓存失效)
+  - aidge payload 透传 Model 字段; 不可用时降级 fashn_local
+  - 5 管线登记在 tryon_provider.PROVIDER_PIPELINE, engine_status 顶层 pipelines 键暴露, 前端可枚举
+  - 第三方 = 预留接入位(§08 生成源无感): 实现一个 Provider 钩子即插即用, 暂未实现真实调用
+  - 价格: aidge=15分(VIAPI_COST_CENT 可调), fashn_local=5分, 缓存命中 0 元
+
+[r14 POSTFX 净负 → RAW 直出开关]
+- Date: 2026-11-18
+- Context: Discovered by Agent while processing user visual feedback that r14_s0_fashn_raw outperformed r14_final_2048
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - 用户视觉验收: r14_s0_fashn_raw.png 优于 r14_final_2048.png——RAW 衣服穿上去/图案正常/小色差/边缘拖影; FINAL 露肩结构变异/印花放大扭曲/袖口下摆光影断裂/透明叠加感
+  - POSTFX 全链路(protect+refit+anchor+ghost+inpaint+reapply+blend)对此 SKU 净负, 把 RAW 的好效果搞砸
+  - 新增 VTON_POSTFX=0 开关(engine_fashn.py L253-265): 跳过全 POSTFX, 直接交付 FASHN 原生 768x576(不 resize 到 2048), 元数据 postfx=raw
+  - VTON_POSTFX 默认 1(启用全链路), 0 时 result 保持 FASHN 原样, 跳过 resize/背景/postfx, 元数据 lock_identity=False
+  - r15 GPU 轮须同时跑 VTON_POSTFX=1(全链路) + VTON_POSTFX=0(RAW 直出) 两套, 对比用户视觉验收
+  - 肩部贴合缺陷(shoulder1 changed_px_abs=0)是生成层问题, POSTFX 无法修; 露肩结构变异是 REAPPLY/锚定层把 FASHN 几何搞歪
 
 ### User Instruction Entry
 User instruction entries should follow this format:
@@ -169,3 +227,215 @@ Entries discovered by the Agent during task execution should follow this format:
   - PLTON / PhysDiff-VTON style high-frequency injection during denoising is not
     available on this SDXL ControlNet pipeline; do not claim generation-time
     pattern constraints.
+
+[User Instruction Summary]
+- Date: 2026-11-09
+- Context: GPU 服务器(AutoDL)按开机时长计费(用不用都收费); 用户对"按需多次往返 SSH 拉取产物导致实例空转计费"强烈不满
+- Category: Workflow & Collaboration
+- Instructions:
+  - AutoDL 实例开机即计费(含无卡开机, 但费率低): 每轮 GPU 推理完成后, 必须 ONE GO 用一条
+    tar+scp 命令批量拉取全部产物(结果图、c*_run.log、c*_debug/、run_cX.py、输入), 禁止按需多次往返拉取
+  - 拉取完成后立即提醒用户关机停止计费; AutoDL 关机保留磁盘数据, 漏拉的日志/debug 可在下次开机时补拉,
+    不值得为补拉让实例空转计费
+  - 服务器可能处于无卡开机状态(无 GPU, nvidia-smi 报 No devices found), SSH/scp/CPU 推理仍可用
+  - 先干完 CPU 能做的事: 本地修码+测试+推送、scp 同步、sha256 校验、CPU 上跑 detect/推断验证、备好重跑 harness
+  - 需要 GPU 的任务(如 compose_tryon_sdxl 出图)明确告知用户, 等用户换有卡开机后再执行
+
+[Project Knowledge Summary]
+- Date: 2026-11-10
+- Context: Discovered by Agent while testing FASHN-first commercial engine path
+- Category: Testing Methods
+- Instructions:
+  - `engine_sdxl._get_sdxl_pipe` 内部调用模块级 `engine_status()`(depth 降级检查),
+    测试中必须同时 `monkeypatch.setattr(engine_sdxl, "engine_status", lambda force=False: {})`
+    和 `monkeypatch.setattr(engine_sdxl, "_engine_status_cache", None)`,否则进程缓存的
+    真实 `engine_status` 结果会让 depth 降级分支干扰断言。
+  - 测试中构造 fake SDXL 权重目录时, `*_safetensors` 文件写 `b"x"` 即可(文件存在性检查),
+    但 IP-Adapter 维度推断测试必须用真 `safetensors.torch.save_file` 写合法张量
+    (`_infer_ip_adapter_input_dim` 会 `safe_open` 读 shape)。
+  - `models/sdxl/lora/` 下有真实 LoRA 权重(`adapter_model.safetensors`),
+    `_get_sdxl_pipe` 的 lora_install_failed 复检(`lora_weight_path`)会命中;
+    测试中 mock `_load_trained_lora` 后, `lora_install_failed` 复检走真实 `lora_io`,
+    若 tmp_path 无 lora 目录则返回 None → 不误标降级。
+  - FASHN 商用路径: `engine_fashn._ensure_parser_stub()` 注入 `sys.modules["fashn_human_parser"]`
+    零张量 stub; `_patch_loaded_pipeline` 同步替换已加载的 `fashn_vton.pipeline` 中
+    `FashnHumanParser` 与 `CATEGORY_TO_BODY_COVERAGE` 引用, 确保 NVIDIA SegFormer 权重
+    永不下载。测试 `test_engine_fashn.py` 验证 stub 标志 `_atelier_commercial_stub=True`。
+
+[Project Knowledge Summary]
+- Date: 2026-11-10 (merged 2026-11-17)
+- Context: Discovered by Agent during the print-protection implementation rounds (refit pipeline / print-ROI inpaint / composite wiring)
+- Category: Workflow & Collaboration
+- Instructions:
+  - 保护贴回: `protect_inverse_refit` 替代旧 blend_tryon + _seam_repair 两步: 遮罩外贴源图,
+    遮罩内保留生成像素, 边界带 Telea 平滑(VTON_PROTECT_FEATHER=4)。
+  - 确定性贴印引擎 `VTON_REFIT_ENGINE` = grid/tps/optical_flow; 贴印在 reapply(pattern_lock) 之前。
+  - 多 seed: VTON_MULTI_SEED 默认 3(纯色 1), worker.run_multiseed 按 quality_gate 择优
+    (print_fidelity 跨 seed 可比), int() 护栏非法回退 3、封顶 8。
+  - 质检分档 delivery_tier: VTON_QG_SSIM=0.70 / VTON_QG_OCR=0.80 分 auto/review;
+    scikit-image 缺失时 ssim 回退 numpy 实现。
+  - 印花 ROI inpaint(VTON_PRINT_INPAINT=1): 贴回区内高频边缘带 Telea 修复, 字母/图案
+    内部保持确定性贴印; FASHN 路径 _ensure_parser_stub 注入 fashn_human_parser 零张量
+    stub, NVIDIA SegFormer 权重永不下载。
+  - print_fidelity_score: 贴回区灰度 NCC 映射 (ncc+1)/2, 纯色参考侧 std<6 返回 1.0;
+    三引擎统一写 result.info.print_fidelity + delivery_tier(composite 参考层=无阴影 ref_layer)。
+  - 测试要点: Telea/边界带逐像素位置对输入敏感, 断言"边缘附近有带"而非精确行号;
+    测试环境变量必须 try/finally pop; 纯色方图 SKU 使 garment_alpha 全 0, 样图须白底+色块;
+    fake safetensors 写 b"x" 即可, IP-Adapter 维度推断测试须真 safetensors 张量。
+  - GPU 冒烟: scripts/gpu/smoke_print_pipeline.py(服务器布局 /root/vton/repo +
+    /root/autodl-tmp/vton_combo); engine 测试须同时 monkeypatch engine_sdxl.engine_status
+    与 _engine_status_cache。
+
+[Project Knowledge Summary]
+- Date: 2026-11-13
+- Context: Discovered by Agent while fixing GPU smoke r9 (fidelity 0.871 → 0.9663 PASS)
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - AutoDL 服务器 conda numpy 1.23.5 (OpenBLAS ILP64) 的 `np.linalg.solve`(LAPACK
+    gesv) 在良态矩阵上返回垃圾: Bookstein 归一化 8 锚点 TPS 的 11x11 系统 cond 20,
+    solve 残差 2.71175554767862(与冒烟日志逐位一致), 同库 `np.linalg.lstsq`(SVD
+    路径) 残差 1.3e-15 正常。沙箱 numpy 2.4.6 两者都正常。结论: 服务器端数值求解
+    必须带残差守卫 + lstsq 换道重试(已实装 preserve_refit.tps_warp), 全库唯一
+    solve 调用点就是 tps_warp。r6-r8 GPU fidelity 卡 0.85 平台的根因即此(守卫
+    触发后静默回退 LANCZOS, 印花贴在几何错位位置), 非算法问题。
+  - 服务器脚本必须显式用 `/root/miniconda3/bin/python`: 裸 `python3` 是系统
+    python, 无 numpy/torch, 冒烟秒退 ModuleNotFoundError。nohup setsid bash
+    非登录 shell 不会加载 conda PATH, sed 替换脚本内 python3 为绝对路径是
+    最稳做法(smoke_launch_261110.sh / collect_smoke_261110.sh 均已替换)。
+  - 冒烟成败判据: 日志结论行 `print_fidelity >= 0.9 auto 档, PASS`; 结果以
+    `result.info.print_fidelity` 为准。GPU 冒烟全程 4-6 分钟, 显存峰值 ~6-8G,
+    用户看到"显存才用 6g 现已停"= 正常跑完(非失败), 先查日志再下结论。
+  - 服务器 python 探针/TCP 往返偶发 SSH 节流(kex_exchange_identification):
+    轮询间隔 ≥100s; 快速连续 SSH 会拿空响应, 误判成任务未完成。
+  - 收集流程: 服务器侧 `collect_smoke_261110.sh` 打一个 tar(日志+结果+输入+环境),
+    单 scp 拉回 /tmp/opencode/gpu_results/<round>/, 符合用户一次性拉取要求。
+  - 冒烟脚本第二段 `VTON_MULTI_SEED=3` 直调 `engine.compose_tryon` 输出
+    `multiseed: {}` 是结构使然(multiseed 由 worker.run_multiseed 写 info,
+    引擎层不写), 非失败信号; PASS 只看单 seed 段。
+
+[Project Knowledge Summary]
+- Date: 2026-11-17
+- Context: Discovered by Agent while implementing r13 same-row fabric sampling (sandbox/GPU cross-machine behavior gaps)
+- Category: Environment Configuration
+- Instructions:
+  - 沙箱 cv2 5.0.0 非真 OpenCV: distanceTransform 的 DIST_LABEL_PIXEL 标签恒 0;
+    resize 会压掉单通道维((h,w,1) 输入返回 2D)。GPU 服务器 cv2 4.8.0 为真实现。
+    需要跨机语义一致的图像原语用纯 numpy 实现(参照 preserve_refit._nearest_fabric_color:
+    切片降采样 + np.maximum 移位传播, 不用 cv2.resize/dilate)。
+  - 沙箱 numpy 2.4.6 广播不做前导补维(仅右对齐): (h,1) 源对 (h,w,3) 会落到后两维
+    → 行列转置; (3,1) 对 (3,4,3) 直接 ValueError(真 numpy 前导补维后成功)。
+    构造行渐变数据必须逐行显式赋值, 禁用 `arr[:,:] = vec[:,None]`;
+    `[...]`/`[..., None]` 尾接与同 ndim 广播两种语义一致, 安全。
+  - 生产代码已审计无前导补维依赖; 新写图像处理代码优先显式 repeat/tile/逐行循环。
+
+[Project Knowledge Summary]
+- Date: 2026-11-18
+- Context: Discovered by Agent while closing r13 GPU round (visual verdict correction)
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - r13 未通过肉眼验收(用户 2026-11-18 判定): 缺陷三层——①GEN 图"衣服贴上去而非穿上去",
+    衣服未盖住肩膀(shoulder pass 因 shoulder_y 检测 null, changed_px_abs=0 未生效);
+    ②r12 回贴图案错位(非商品图图案); ③r13 只贴胸口核心场, 袖口/衣领图案仍为 FASHN
+    生成错版, 未回贴。print_fidelity 1.0 只保证胸口核心, 不覆盖全服装图案。
+  - 后续修向: 贴回掩膜扩展到全部图案显著区(袖口/领口/下摆) + 肩部几何修复
+    (先确认商品图是否露肩款); 机器指标(缝线 delta/fidelity)不能替代用户肉眼验收。
+
+[Project Knowledge Summary]
+- Date: 2026-11-18
+- Context: r13 视觉验收驳回后的像素+图像分析诊断(image_analysis 读 dump)
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - r13 对本 SKU(khaite goya silk top)回贴是净负向: 胸口区 FINAL 比 FASHN raw 更差
+    (猴图案糊化+方块状/涂抹伪影, raw 的图案更连贯清晰) —— 贴回未修复反劣化,
+    对该 SKU 应"仅 raw 交付"而非贴回。
+  - 商品实为尖领纽扣衬衫(双猴胸前印花, 黄绿渐变+竖纹布面), 有常规肩袖;
+    FINAL 肩部几何上被覆盖(shoulder pass changed 0px 因检测失败但 drawn 覆盖肩部),
+    "衣服没盖住肩膀"的观感源于 ①领口/颈发交界混合不自然 ②整体"贴片感"数字伪影。
+  - 袖口: FINAL 与商品平铺黄竖纹基本一致(用户"袖口图案不符"在该区较弱, 主责在
+    领口/胸口贴回区劣化)。
+  - 教训: print_fidelity 1.0 只保证贴回区=参考区, 不保证观感; 机器指标全绿仍可能
+    视觉翻车, 用户肉眼验收是唯一收口标准。
+  - 贴回修不了生成层几何(衣服贴上去/露肩观感=生成缺陷, 需生成侧投影改进或换种子)。
+
+[Project Knowledge Summary]
+- Date: 2026-11-18
+- Context: r13 驳回定位: 涂抹块根因(对 /tmp/opencode/gpu_results/r13_bundle 离线复算)
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - r13 涂抹感根因 = 行带锚定 delta_row 的行边界跳变: REAPPLY2 胸口核心与 RAW 的差异集中在
+    y=672-676(核心顶边界, mean|Δ|≈46)与 y=823-851(核心内带边界, mean|Δ|≈43),
+    即 ±24 行窗环样本起止处 delta 突变 → 可见条带。块均值相邻行差 REAPPLY2 mean 9.83
+    vs RAW 7.53(>2 行数 29/37)。
+  - 对本 SKU(khaite goya 双猴)贴回净负向: 胸口核心细节能量 REAPPLY2/FINAL 4.36/6.02
+    行/列 vs RAW 0.91/1.53(3-4x), 图案糊化; 正确交付 = 仅 raw 出图。
+  - 修复方向: delta_row 行边界处做平滑(窗口内样本覆盖度加权/双线性过渡), 消除带边界跳变;
+    沙箱离线即可验证(用 r13_bundle dump), 不烧 GPU。
+
+[Project Knowledge Summary]
+- Date: 2026-11-18
+- Context: r13 驳回定位 —— 行带锚定涂抹块根因(r13_bundle 离线复算)
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - r13 "涂抹/方块"根因 = 行带锚定 delta_row 的行边界跳变: 胸口核心 y=672-676(顶边界,
+    mean|Δ|≈46)与 y=823-851(内带边界, mean|Δ|≈43) 出现突变; 块均值相邻行差 REAPPLY2
+    9.83 vs RAW 7.53, >2 行数 29/37 → 贴回区出现横向条带, 观感"方块状/涂抹"。
+  - 胸口核心细节能量 REAPPLY2/FINAL 行4.36/列6.02 vs RAW 0.91/1.53(3-4x), 贴回把参考
+    布料的行带块边界叠加进图案 → 对本 SKU 贴回是净负向(正确交付=仅 raw)。
+  - 修复方向(r14): delta_row 按行平滑(如行差限幅/双线性), 消除带边界跳变; 沙箱对
+    r13_bundle dump 离线验证(改 preserve_refit.anchor_ref_local 后重放 reapply 段), 无需 GPU。
+
+[Project Knowledge Summary]
+- Date: 2026-11-18
+- Context: r13 驳回后定位"涂抹块"根因 —— 对 r13_bundle 各阶段 dump 离线复算
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - 涂抹块根因 = 行带锚定 delta_row 的行边界跳变: 胸口核心区 REAPPLY2 与 RAW 的逐行
+    差异集中在 y=672-676(核心顶边界, mean|Δ|=46.2)与 y=823-851(核心内带边界, ≈43),
+    即 ±24 行窗锚定的中位 delta 在窗内样本切换处突变 → 横向条带边界("行带状涂抹感")。
+  - 本 SKU(khaite goya 双猴)贴回净负向: 胸口细节能量 FINAL 行4.36/列6.02 vs RAW 行0.91/
+    列1.53(3-4x 突变密度), 图像分析确认 FINAL 胸口图案糊化劣于 raw。正确交付 = 仅 raw。
+  - 修复方向: delta_row 逐行平滑(行间限幅/双线性)消除带边界跳变; 贴回区扩展到袖口/
+    领口前必须先解决该跳变, 否则扩区=扩大劣化面。
+  - r13 相关 L2 骨架(/tmp/opencode/ai-tryon-platform/)已停工(基于 r13 通过的错误前提)。
+
+[电商合规标准件 + 5 平台推送骨架]
+- Date: 2026-11-18
+- Context: 用户要求"质检和合规做成标准件", 后端对接 5 电商渠道(亚马逊/Shopify/速卖通/TikTok/独立站)
+- Category: Operations & Deployment
+- Instructions:
+  - 合规标准件 = backend/compliance.py: 声明式 ComplianceRules 5 平台(shopify/amazon/aliexpress/tiktok/independent_site),
+    检测原语纯 CPU(白底占比/边缘水印扫描/文件体积/宽高比), 输出 compliance_report JSON
+  - 合规 fail → delivery_tier 强制 review(人工验收), 合规不阻断出图(检测异常降级 warning)
+  - 平台注册: PLATFORM_PRESETS + PUSHERS 5 渠道, 新加平台只加一条规则集 + 一行注册
+  - 推送适配器骨架: Amazon SP-API / AliExpress / TikTok Shop 仅凭据校验+占位返回, 需 API Key 联调;
+    独立站 Webhook 已实现(multipart 上传, SSRF 防护同 Shopify)
+  - 客户画像: 精品/品牌卖家算"上架时间+退货率+合规风险", 工贸一体批量大流程固定
+
+[GzmDesign 二开集成: 海报排版台 + 纯 CPU 渲染]
+- Date: 2026-11-18
+- Context: 用户要求把 GzmDesign (Vue3+LeaferJS) 集成到工作区, 做图案替换+海报排版, 纯 CPU 不烧 GPU
+- Category: Environment Configuration
+- Instructions:
+  - gzm-design/ 子项目: 独立 Vite SPA (端口 5174), 代理 /api → localhost:8000
+  - 修 4 个 GzmDesign 已知 bug: ①复制粘贴 useCopyPaste clipboard target ②图层显隐 visible/Leafer.visible 双写 ③CJK 字体 fontGuard() ④撤销栈 record() 记录 AI 编辑
+  - backend/poster.py: Pillow 纯 CPU 渲染海报 (2x PNG), 支持 text/price/logo/qr/rect 5 类图层
+  - /api/poster/render 端点: POST 模板 JSON → 返回 png_b64 + meta (layer_count/visible_layers/types)
+  - 海报排版走 CPU, 试衣/换图案/换背景走 GPU (/api/jobs), 两者在 GzmDesign AiPanel 里统一入口
+  - gzm-design 测试未纳入主仓 vitest (独立 package.json), 主仓回归门仍 496+14 passed
+
+[GPU 服务器 4090 D 部署与冒烟]
+- Date: 2026-11-19
+- Context: Discovered by Agent while deploying FASHN stack to GPU server for 12-condition smoke test
+- Category: Operations & Deployment
+- Instructions:
+  - GPU 服务器: `sshpass -p 'xBE8jCCrvkPxtZI+dzwfYsEavG0aAc4K' ssh -p 46041 root@connect.cqa1.seetacloud.com`
+  - 代码目录: `/root/vton/repo/` (从 workspace rsync/tar 同步, 排除 models/node_modules/.git)
+  - 模型目录: `/root/vton/repo/models/` (34G, FASHN 1.9GB + SDXL + dwpose ONNX), 符号链接 `/root/vton/models -> /root/vton/repo/models` (engine_fashn.py 的 `_REPO_ROOT` 解析到 `/root/vton/`)
+  - Python: `~/miniconda3/bin/python` (3.10.12), pip 用 `~/miniconda3/bin/pip`
+  - FASHN: `fashn-vton 1.5.0` (editable install from `/root/autodl-tmp/fashn-vton-1.5`), 需 `PYTHONPATH=/root/vton/repo:/root/autodl-tmp/fashn-vton-1.5/src`
+  - 关键依赖: `fashn-human-parser 0.1.1` + `onnxruntime-gpu 1.23.2` (CUDA provider) + `numpy 1.26.4` (scipy 兼容)
+  - 启动脚本: `/root/vton/repo/start_gpu.sh` (LICENSE_MODE=commercial, FASHN_DIR, PYTHONPATH, uvicorn :8000)
+  - 基座图片: `/root/vton/repo/data/bases/` (5 张: women/men/girl/boy/baby _01.png), 需从 workspace/backend/data/bases/ 手动同步
+  - 冒烟测试: 提交 tryon job 用 `audience=auto` + `garment_type=upper` (不是 "tops"), 400 错误时检查 audience/garment_type 枚举值
+  - GPU 冒烟通过: job_6b09bdbb5c5a, engine=fashn-vton, ~50s, 5.7GB VRAM
+  - 闲置休眠: 服务器拉取后会自动休眠, 需 SSH 唤醒

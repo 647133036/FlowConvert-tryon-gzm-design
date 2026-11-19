@@ -31,7 +31,6 @@ def _job_file(tmp_path):
 
 @pytest.fixture()
 def done_job(tmp_path, monkeypatch):
-
     png = tmp_path / "job_done.png"
     from PIL import Image
 
@@ -310,3 +309,48 @@ def test_ssrf_non_global_ips_rejected(monkeypatch, ip):
     monkeypatch.setattr(push.socket, "getaddrinfo", _fake_getaddrinfo)
     with pytest.raises(PushError, match="non-global"):
         push._check_host_safe("evil.com")
+
+
+# ---------- 5 平台推送适配器(骨架) ----------
+
+
+def test_push_store_amazon_skeleton():
+    r = push_store(
+        {"id": "j1", "result_url": "/files/results/j1.jpg"},
+        {"platform": "amazon", "product_id": "SELLER1", "api_key": "tok"},
+        {},
+    )
+    assert r["ok"] is True
+    assert "skeleton" in r["message"]
+
+
+def test_push_store_aliexpress_skeleton():
+    r = push_store(
+        {"id": "j1", "result_url": "/files/results/j1.jpg"},
+        {"platform": "aliexpress", "api_key": "ak", "product_id": "S1"},
+        {},
+    )
+    assert r["ok"] is True
+    assert "skeleton" in r["message"]
+
+
+def test_push_store_tiktok_skeleton():
+    r = push_store(
+        {"id": "j1", "result_url": "/files/results/j1.jpg"},
+        {"platform": "tiktok", "api_key": "tok", "product_id": "SHOP1"},
+        {},
+    )
+    assert r["ok"] is True
+    assert "skeleton" in r["message"]
+
+
+def test_push_store_amazon_missing_seller():
+    r = push_store({"id": "j1", "result_url": "/files/results/j1.jpg"}, {"platform": "amazon", "api_key": "tok"}, {})
+    assert r["ok"] is False
+    assert "seller_id" in r["message"]
+
+
+def test_push_store_independent_site_missing_url():
+    r = push_store({"id": "j1", "result_url": "/files/results/j1.jpg"}, {"platform": "independent_site"}, {})
+    assert r["ok"] is False
+    assert "upload URL" in r["message"]

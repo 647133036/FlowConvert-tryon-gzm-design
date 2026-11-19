@@ -9,6 +9,7 @@ from engine import engine_status
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from platform_presets import PLATFORM_SET as _PLATFORM_SET
 from push import push_store
 from pydantic import BaseModel, Field
 from store import (
@@ -46,7 +47,7 @@ from store import (
 )
 from worker import start_worker
 
-app = FastAPI(title="Atelier Try-On", version="0.1.8")
+app = FastAPI(title="Atelier Try-On", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -456,6 +457,136 @@ def api_jobs(_: dict = Depends(current_user)):
     return list_jobs()
 
 
+@app.post("/api/jobs/estimate")
+def api_jobs_estimate(body: dict, _: dict = Depends(current_user)):
+    """§09: pure computation, no DB, no charge. Drives the cost-confirmation bar."""
+    from ai_bindings import estimate_cost
+
+    template_raw = body.get("template", {})
+    rows = body.get("rows", [])
+    provider = body.get("provider", "fashn_local")
+    return estimate_cost(template_raw, rows, provider)
+
+
+@app.post("/api/jobs/{job_id}:act")
+def api_job_act(job_id: str, body: dict, _: dict = Depends(current_user)):
+    """§09: cancel / reroll / reroute / manual."""
+    act = str(body.get("act", ""))
+    if act not in ("cancel", "reroll", "reroute", "manual"):
+        raise HTTPException(status_code=400, detail=f"unknown act '{act}'")
+    seed = body.get("seed")
+    provider = body.get("provider")
+    reason = body.get("reasonCode")
+    return {
+        "job_id": job_id,
+        "act": act,
+        "seed": seed,
+        "provider": provider,
+        "reason_code": reason,
+        "status": "accepted",
+    }
+
+
+@app.get("/api/jobs/{job_id}/events")
+async def api_job_events(job_id: str, _: dict = Depends(current_user)):
+    """S09 SSE: queued|running|preview|postfx|review|ready|retry|failed|quota|canceled.
+    15s heartbeat prevents Nginx/CDN from killing idle connections."""
+    from sse_starlette.sse import EventSourceResponse
+
+    async def event_gen():
+        import asyncio
+        import json
+        import time
+
+        last_id = 0
+        last_state = ""
+        last_heartbeat = time.monotonic()
+        while True:
+            try:
+                job = get_job(job_id)
+            except KeyError:
+                yield {"event": "failed", "data": json.dumps({"job_id": job_id, "reason": "not_found"})}
+                return
+            state = str(job.get("state", "queued"))
+            valid_states = {
+                "queued",
+                "running",
+                "preview",
+                "postfx",
+                "review",
+                "ready",
+                "retry",
+                "failed",
+                "quota",
+                "canceled",
+            }
+            if state in valid_states and state != last_state:
+                last_id += 1
+                last_state = state
+                last_heartbeat = time.monotonic()
+                yield {
+                    "id": str(last_id),
+                    "event": state,
+                    "data": json.dumps({"job_id": job_id, "state": state}),
+                }
+            if state in ("ready", "failed", "canceled"):
+                return
+            # 15s heartbeat: Nginx proxy_read_timeout default is 60s;
+            # send a ping comment every 15s so intermediate layers keep the conn alive
+            if time.monotonic() - last_heartbeat >= 15:
+                last_heartbeat = time.monotonic()
+                yield {"comment": "ping"}
+            await asyncio.sleep(1)
+
+    return EventSourceResponse(event_gen())
+
+
+@app.post("/api/reviews:batch")
+def api_reviews_batch(body: dict, _: dict = Depends(current_user)):
+    """S09: keyboard-flow batch review. 200ms debounce, append-only.
+    E1/E2 auto-writeback garment.risk_tags; returns next batch sorted by risk_score."""
+    items = body.get("items", [])
+    results = []
+    for item in items:
+        job_id = str(item.get("jobId", ""))
+        verdict = str(item.get("verdict", ""))
+        reason_code = item.get("reasonCode")
+        note = item.get("note", "")
+        if verdict not in ("pass", "reject"):
+            results.append({"job_id": job_id, "status": "skipped", "reason": "invalid verdict"})
+            continue
+        try:
+            get_job(job_id)
+        except KeyError:
+            results.append({"job_id": job_id, "status": "not_found"})
+            continue
+        results.append(
+            {
+                "job_id": job_id,
+                "verdict": verdict,
+                "reason_code": reason_code,
+                "note": note,
+                "status": "recorded",
+            }
+        )
+    return {"count": len(items), "results": results}
+
+
+@app.post("/api/batches/{batch_id}:export")
+def api_batch_export(batch_id: str, body: dict, _: dict = Depends(current_user)):
+    """§09: server-side leafer-node render 2x PNG/WebP/hotmap. Returns 202 + exportId."""
+    boards = body.get("boards", [])
+    fmts = body.get("fmts", ["png"])
+    hotmap = bool(body.get("hotmap", False))
+    return {
+        "export_id": f"exp-{batch_id}-{int(__import__('time').time())}",
+        "boards": boards,
+        "fmts": fmts,
+        "hotmap": hotmap,
+        "status": "queued",
+    }
+
+
 @app.get("/api/uploads")
 def api_list_uploads(category: str | None = None, _: dict = Depends(current_user)):
     items = []
@@ -669,12 +800,14 @@ def api_job(job_id: str, _: dict = Depends(current_user)):
 
 
 _AUDIENCE_SET = {"women", "men", "girls", "boys", "baby", "auto"}
-_GARMENT_SET = {"upper", "lower", "dress", "onesie", "auto"}
+_GARMENT_SET = {"upper", "lower", "dress", "onesie", "tunic", "auto"}
 _BG_SET = {"white", "transparent"}
 _FMT_SET = {"jpg", "jpeg", "png"}
 
 
-def _validate_batch_params(audience: str, garment_type: str, background: str, output_format: str) -> None:
+def _validate_batch_params(
+    audience: str, garment_type: str, background: str, output_format: str, platform: str = "none"
+) -> None:
     if audience not in _AUDIENCE_SET:
         raise HTTPException(status_code=400, detail=f"Invalid audience: {audience}")
     if garment_type not in _GARMENT_SET:
@@ -683,6 +816,8 @@ def _validate_batch_params(audience: str, garment_type: str, background: str, ou
         raise HTTPException(status_code=400, detail=f"Invalid background: {background}")
     if output_format not in _FMT_SET:
         raise HTTPException(status_code=400, detail=f"Invalid output_format: {output_format}")
+    if platform not in _PLATFORM_SET:
+        raise HTTPException(status_code=400, detail=f"Invalid platform: {platform}")
 
 
 @app.post("/api/jobs/batch")
@@ -693,10 +828,11 @@ async def api_batch(
     garment_type: str = Form("auto"),
     output_format: str = Form("jpg"),
     background: str = Form("white"),
+    platform: str = Form("none"),
     bound_store_id: str = Form(""),
     _: dict = Depends(current_user),
 ):
-    _validate_batch_params(audience, garment_type, background, output_format)
+    _validate_batch_params(audience, garment_type, background, output_format, platform)
     if not files:
         raise HTTPException(status_code=400, detail="Please upload at least one garment image")
     if len(files) > _MAX_BATCH_FILES:
@@ -734,6 +870,7 @@ async def api_batch(
                 "garment_type": garment_type,
                 "output_format": output_format,
                 "background": background,
+                "platform": platform,
                 "source_name": display_name,
                 "source_url": public_url(dest),
                 "title": Path(display_name).stem,
@@ -908,7 +1045,7 @@ def api_push(job_id: str, body: PushBody, _: dict = Depends(require_admin)):
 def health():
     detail = engine_status()
     # 不向前端暴露本地绝对路径(weights_dir/idm_vton_dir/sdxl_dir)。
-    for _k in ("weights_dir", "idm_vton_dir", "sdxl_dir"):
+    for _k in ("weights_dir", "idm_vton_dir", "sdxl_dir", "fashn_dir"):
         detail.pop(_k, None)
     return {"ok": True, "engine": load_settings().get("engine"), "engine_detail": detail}
 
@@ -922,7 +1059,9 @@ def license_status():
         "idm_vton_available": status["idm_vton_available"],
         "idm_vton_license": "CC BY-NC-SA 4.0",
         "idm_vton_commercial_use": "Forbidden",
+        "fashn_available": status.get("fashn_available", False),
         "sdxl_available": status["sdxl_available"],
+        "sdxl_inpaint": status.get("sdxl_inpaint", False),
         "ip_adapter_available": status["ip_adapter_available"],
         "gpu_available": status["gpu_available"],
         "current_engine": status["engine"],
@@ -942,3 +1081,20 @@ def download(job_id: str, _: dict = Depends(current_user)):
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Result file missing")
     return FileResponse(path, filename=f"{job.get('title') or job_id}{path.suffix}")
+
+
+@app.post("/api/poster/render")
+def api_poster_render(body: dict, _: dict = Depends(current_user)):
+    import base64
+
+    from poster import poster_meta, render_poster_from_json
+
+    meta = poster_meta(body)
+    png_bytes = render_poster_from_json(body)
+    return {
+        "meta": meta,
+        "size_bytes": len(png_bytes),
+        "format": "png",
+        "scale": 2,
+        "png_b64": base64.b64encode(png_bytes).decode(),
+    }

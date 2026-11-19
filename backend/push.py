@@ -221,9 +221,105 @@ def push_wordpress(job: dict, store: dict, body: dict) -> dict[str, Any]:
     }
 
 
+# ---------- Amazon (SP-API 媒体上传, 骨架) ----------
+
+
+def push_amazon(job: dict, store: dict, body: dict) -> dict[str, Any]:
+    """Amazon SP-API 图片上传(骨架): 需 seller_id + mws_auth_token(或 LWA refresh_token)。
+
+    完整流程: LWA token → SP-API authorize endpoint → Catalog Images API
+    (PUT /catalog/2020-06-01/products/{asin}/images)。当前骨架校验凭据存在性,
+    缺失时返回明确错误; 联调需卖家 SP-API 注册。
+    """
+    seller_id = (store.get("product_id") or "").strip()
+    token = (store.get("api_key") or "").strip()
+    region = (store.get("shop_url") or "").strip() or "NA"
+    if not seller_id:
+        raise PushError("Amazon store missing seller_id (product_id field)")
+    if not token:
+        raise PushError("Amazon store missing MWS/LWA token (api_key field)")
+    # 骨架: 未接 SP-API SDK, 返回"已登记"提示(运营需手动传图或待 SP-API 联调)。
+    return {
+        "ok": True,
+        "url": "",
+        "message": f"Amazon SP-API push skeleton: seller={seller_id} region={region}; "
+        "full SP-API media upload pending integration",
+    }
+
+
+# ---------- AliExpress (开放平台, 骨架) ----------
+
+
+def push_aliexpress(job: dict, store: dict, body: dict) -> dict[str, Any]:
+    """AliExpress 开放平台图片上传(骨架): 需 app_key + app_secret + access_token。
+
+    完整流程: 获取 access_token → productImage.addImage (图片上传) →
+    product.updatePost (SKU 绑定)。当前骨架校验凭据, 缺失时返回明确错误。
+    """
+    app_key = (store.get("api_key") or "").strip()
+    seller_id = (store.get("product_id") or "").strip()
+    if not app_key:
+        raise PushError("AliExpress store missing app_key (api_key field)")
+    return {
+        "ok": True,
+        "url": "",
+        "message": f"AliExpress open API push skeleton: seller={seller_id}; full image upload pending integration",
+    }
+
+
+# ---------- TikTok Shop (商家 API, 骨架) ----------
+
+
+def push_tiktok(job: dict, store: dict, body: dict) -> dict[str, Any]:
+    """TikTok Shop 商家 API 图片上传(骨架): 需 access_token + shop_id。
+
+    完整流程: /product/202309/image/upload (multipart) → /product/202309/update。
+    当前骨架校验凭据, 缺失时返回明确错误。
+    """
+    token = (store.get("api_key") or "").strip()
+    shop_id = (store.get("product_id") or "").strip()
+    if not token:
+        raise PushError("TikTok Shop store missing access_token (api_key field)")
+    return {
+        "ok": True,
+        "url": "",
+        "message": f"TikTok Shop API push skeleton: shop={shop_id}; full image upload pending integration",
+    }
+
+
+# ---------- 独立站 (通用 Webhook / 上传, 骨架) ----------
+
+
+def push_independent_site(job: dict, store: dict, body: dict) -> dict[str, Any]:
+    """独立站通用 Webhook 推送(骨架): 向 shop_url 发 POST multipart 上传成品图。
+
+    适用于自建 DTC 站点(如 Shopify 以外的 headless 独立站): 约定 shop_url 为
+    上传端点, api_key 为 Bearer token。SSRF 防护同 Shopify(强制 https + 全局 IP)。
+    """
+    url = (store.get("shop_url") or "").strip()
+    token = (store.get("api_key") or "").strip()
+    if not url:
+        raise PushError("Independent site store missing upload URL (shop_url field)")
+    validated = _validate_shop_url(url)
+    path = _result_path(job)
+    files = {"file": (path.name, path.open("rb"), "image/jpeg")}
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    resp = requests.post(validated, files=files, headers=headers, timeout=30)
+    resp.raise_for_status()
+    return {
+        "ok": True,
+        "url": validated,
+        "message": f"Uploaded to independent site ({resp.status_code})",
+    }
+
+
 PUSHERS = {
     "shopify": push_shopify,
     "wordpress": push_wordpress,
+    "amazon": push_amazon,
+    "aliexpress": push_aliexpress,
+    "tiktok": push_tiktok,
+    "independent_site": push_independent_site,
 }
 
 

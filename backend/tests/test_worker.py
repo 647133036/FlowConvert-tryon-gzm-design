@@ -1,4 +1,5 @@
 import copy
+import os
 
 import pytest
 from PIL import Image
@@ -14,6 +15,16 @@ from worker import process_job
 
 def _make_png(path, size=(256, 384), color=(30, 120, 200)):
     Image.new("RGB", size, color).save(path)
+
+
+def _make_sku_png(path, size=(200, 200), color=(200, 40, 40)):
+    """白底 + 中央色块的平铺 SKU 图(composite 路径 garment_alpha 需要背景对比)。"""
+    import numpy as np
+
+    w, h = size
+    arr = np.full((h, w, 3), 255, dtype=np.uint8)
+    arr[h // 5 : h * 4 // 5, w // 5 : w * 4 // 5] = color
+    Image.fromarray(arr, "RGB").save(path)
 
 
 @pytest.fixture()
@@ -50,7 +61,7 @@ def test_process_job_done_with_base_ethnicity(tmp_path, ready_base_image):
     import store as store_mod
 
     src = store_mod.UPLOADS / "ladies_dress.jpg"
-    _make_png(src, (200, 200), (200, 40, 40))
+    _make_sku_png(src, (200, 200), (200, 40, 40))
     base_table = [
         {
             "id": "base_women_01",
@@ -79,6 +90,10 @@ def test_process_job_done_with_base_ethnicity(tmp_path, ready_base_image):
     assert final["preview_url"]
     assert get_job(job["id"])["audience"] == "women"
     assert get_job(job["id"])["garment_type"] == "dress"
+    # 真实 compose 链路(CPU composite 兜底)的印花保真分/档位/多 seed 元数据落库
+    assert final.get("print_fidelity", 0) >= 0.99  # 纯色款 → 满分
+    assert final.get("delivery_tier") == "auto"
+    assert final.get("multiseed", {}).get("n_seeds", 0) >= 1
 
 
 def test_process_job_missing_base_file_fails(tmp_path):
@@ -138,3 +153,140 @@ def test_workflow_claim_and_fail_marks_job():
     assert claimed and claimed["id"] == job["id"]
     patch_job(job["id"], {"status": "failed", "error": "boom", "progress": 100})
     assert get_job(job["id"])["status"] == "failed"
+
+
+def _stub_compose_factory(fidelity_by_seed=None, fidelity=0.95):
+    """返回 compose_tryon 替身: 写入 print_fidelity/delivery_tier 到 img.info。"""
+
+    def _compose(base_path, src, audience, garment_type, long_side, background, ethnicity):
+        img = Image.new("RGB", (96, 128), (120, 60, 60))
+        if fidelity_by_seed is not None:
+            seed = int(os.environ.get("VTON_SEED", "0"))
+            pf = fidelity_by_seed.get(seed, 0.5)
+        else:
+            pf = fidelity
+        img.info["print_fidelity"] = pf
+        img.info["delivery_tier"] = "auto" if pf >= 0.70 else "review"
+        img.info["engine"] = "stub"
+        return img
+
+    return _compose
+
+
+def test_process_job_persists_print_fidelity_tier(tmp_path, ready_base_image, monkeypatch):
+    """compose 写入 print_fidelity/delivery_tier 时落库 job 元数据。"""
+    import worker as worker_mod
+
+    monkeypatch.setenv("VTON_MULTI_SEED", "1")
+    monkeypatch.setattr(worker_mod, "compose_tryon", _stub_compose_factory(fidelity=0.95))
+
+    import store as store_mod
+
+    src = store_mod.UPLOADS / "print_tee.jpg"
+    _make_png(src, (200, 200), (200, 40, 40))
+    base_table = [
+        {
+            "id": "base_women_01",
+            "file": None,
+            "path": str(ready_base_image),
+            "audience": "women",
+            "ethnicity": "east_asia",
+        }
+    ]
+    job = create_job({"base_id": "base_women_01", "source_name": "print_tee.jpg", "title": "tee"})
+    process_job(copy.deepcopy(job), base_table)
+    final = get_job(job["id"])
+    assert final["status"] == "done"
+    assert final["print_fidelity"] == 0.95
+    assert final["delivery_tier"] == "auto"
+
+
+def test_process_job_multiseed_picks_best_print_fidelity(tmp_path, ready_base_image, monkeypatch):
+    """多 seed 按印花保真分择优, multiseed 元数据(含 scores)落库。"""
+    import worker as worker_mod
+
+    monkeypatch.setenv("VTON_MULTI_SEED", "2")
+    # refit_seeds_default() = [42, 1042]: 1042 分高 → 应被选中
+    monkeypatch.setattr(
+        worker_mod,
+        "compose_tryon",
+        _stub_compose_factory(fidelity_by_seed={42: 0.40, 1042: 0.90}),
+    )
+
+    import store as store_mod
+
+    src = store_mod.UPLOADS / "print_tee2.jpg"
+    _make_png(src, (200, 200), (200, 40, 40))
+    base_table = [
+        {
+            "id": "base_women_01",
+            "file": None,
+            "path": str(ready_base_image),
+            "audience": "women",
+            "ethnicity": "east_asia",
+        }
+    ]
+    job = create_job({"base_id": "base_women_01", "source_name": "print_tee2.jpg", "title": "tee2"})
+    process_job(copy.deepcopy(job), base_table)
+    final = get_job(job["id"])
+    assert final["status"] == "done"
+    assert final["print_fidelity"] == 0.90
+    assert final["delivery_tier"] == "auto"
+    ms = final.get("multiseed") or {}
+    assert ms.get("n_seeds") == 2
+    assert ms.get("chosen_seed") == 1042
+    assert ms.get("scores", {}).get("42") == 0.40
+    assert ms.get("scores", {}).get("1042") == 0.90
+
+
+def test_process_job_idempotent_cache_hit(tmp_path, ready_base_image, monkeypatch):
+    """幂等缓存(§03/§06): 同人同衣同参数重复提交 → 第二张 0 元复用成图。"""
+    import store as store_mod
+
+    monkeypatch.setenv("VTON_MULTI_SEED", "0")
+    src = store_mod.UPLOADS / "cache_tee.jpg"
+    _make_sku_png(src, (200, 200), (60, 60, 160))
+    base_table = [
+        {
+            "id": "base_women_01",
+            "file": None,
+            "path": str(ready_base_image),
+            "audience": "women",
+            "ethnicity": "east_asia",
+        }
+    ]
+    job1 = create_job({"base_id": "base_women_01", "source_name": "cache_tee.jpg", "title": "c1"})
+    process_job(copy.deepcopy(job1), base_table)
+    final1 = get_job(job1["id"])
+    assert final1["status"] == "done"
+    assert final1.get("idem_key")
+    assert final1.get("cache_hit") is False
+    assert final1.get("cost_est_cent", 0) >= 0
+
+    # 同输入重投: 队列重投/双击提交等价 → 命中缓存, 0 元秒回。
+    job2 = create_job({"base_id": "base_women_01", "source_name": "cache_tee.jpg", "title": "c2"})
+    assert job2["id"] != job1["id"]
+    process_job(copy.deepcopy(job2), base_table)
+    final2 = get_job(job2["id"])
+    assert final2["status"] == "done"
+    assert final2["cache_hit"] is True
+    assert final2["cost_cent"] == 0
+    assert final2["idem_key"] == final1["idem_key"]
+    from pathlib import Path as _P
+
+    out = store_mod.RESULTS / _P(final2["result_url"]).name
+    assert out.is_file()
+    assert out.stat().st_size > 0
+
+
+def test_claim_next_job_respects_prio():
+    """§07: interactive(prio 0) 不被 batch(prio 1) 饿死。"""
+    from worker import process_job  # noqa: F401  确保 worker 可导入
+
+    jb = create_job({"base_id": "x", "source_name": "b.jpg", "title": "batch", "prio": 1})
+    ji = create_job({"base_id": "x", "source_name": "i.jpg", "title": "interactive", "prio": 0})
+    claimed = claim_next_job()
+    assert claimed["id"] == ji["id"]
+    assert claimed["prio"] == 0
+    next_one = claim_next_job()
+    assert next_one["id"] == jb["id"]

@@ -1,0 +1,611 @@
+from __future__ import annotations
+
+import logging
+import os
+import sys
+import threading
+import types
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+logger = logging.getLogger("atelier.engine_fashn")
+
+_GPU_LOCK = threading.Lock()
+_PIPE_LOCK = threading.Lock()
+_fashn_state: dict = {"pipe": None}
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+FASHN_DIR = _REPO_ROOT / "models" / "fashn"
+
+GARMENT_TYPE_TO_FASHN = {
+    "upper": "tops",
+    "tunic": "tops",
+    "lower": "bottoms",
+    "dress": "one-pieces",
+    "onesie": "one-pieces",
+}
+
+
+def fashn_category(garment_type: str) -> str:
+    return GARMENT_TYPE_TO_FASHN.get(garment_type, "tops")
+
+
+def _ensure_parser_stub() -> None:
+    """Commercial path must not load fashn-human-parser (NVIDIA SegFormer license)."""
+    existing = sys.modules.get("fashn_human_parser")
+    if existing is not None and getattr(existing, "_atelier_commercial_stub", False):
+        _patch_loaded_pipeline(existing)
+        return
+
+    stub = types.ModuleType("fashn_human_parser")
+    stub.CATEGORY_TO_BODY_COVERAGE = {
+        "tops": "upper",
+        "bottoms": "lower",
+        "one-pieces": "full",
+    }
+    # fashn_vton v1.5 在模块导入期还需要以下三个常量(preprocessing/agnostic.py)。
+    # segmentation_free=True 时运行期不触解析器, 但导入必须成功; 值按 SCHP/LIP
+    # 语义给出(仅供类型/结构兼容, 商用路径永不消费)。
+    stub.BODY_COVERAGE_TO_LABELS = {
+        "upper": ("Upper-clothes",),
+        "lower": ("Pants", "Skirt"),
+        "full": ("Dress",),
+    }
+    stub.IDENTITY_LABELS = (
+        "Face",
+        "Hair",
+        "Sunglasses",
+        "Hat",
+        "Left-arm",
+        "Right-arm",
+        "Left-leg",
+        "Right-leg",
+        "Left-shoe",
+        "Right-shoe",
+    )
+    stub.LABELS_TO_IDS = {
+        "Background": 0,
+        "Hat": 1,
+        "Hair": 2,
+        "Sunglasses": 3,
+        "Upper-clothes": 4,
+        "Skirt": 5,
+        "Pants": 6,
+        "Dress": 7,
+        "Belt": 8,
+        "Left-shoe": 9,
+        "Right-shoe": 10,
+        "Face": 11,
+        "Left-leg": 12,
+        "Right-leg": 13,
+        "Left-arm": 14,
+        "Right-arm": 15,
+        "Bag": 16,
+        "Scarf": 17,
+        # agnostic.py 深路径索引的部位键 (seg_free=True 不消费, 结构兼容)
+        "arms": 18,
+        "torso": 19,
+        "legs": 20,
+        "hands": 21,
+        "feet": 22,
+    }
+    stub.BODY_COVERAGE_TO_FASHN_LABELS = {}
+    stub.FASHN_LABELS_TO_IDS = {}
+
+    class FashnHumanParser:
+        def __init__(self, device: str = "cpu", **_kwargs):
+            self.device = device
+
+        def predict(self, image):
+            import numpy as np
+
+            arr = np.asarray(image)
+            h, w = arr.shape[:2]
+            return np.zeros((h, w), dtype=np.int32)
+
+    stub.FashnHumanParser = FashnHumanParser
+    stub._atelier_commercial_stub = True
+    sys.modules["fashn_human_parser"] = stub
+    _patch_loaded_pipeline(stub)
+
+
+def _patch_loaded_pipeline(stub) -> None:
+    pipe_mod = sys.modules.get("fashn_vton.pipeline")
+    if pipe_mod is None:
+        return
+    pipe_mod.FashnHumanParser = stub.FashnHumanParser
+    pipe_mod.CATEGORY_TO_BODY_COVERAGE = stub.CATEGORY_TO_BODY_COVERAGE
+
+
+def fashn_available() -> tuple[bool, str]:
+    required = [
+        FASHN_DIR / "model.safetensors",
+        FASHN_DIR / "dwpose" / "yolox_l.onnx",
+        FASHN_DIR / "dwpose" / "dw-ll_ucoco_384.onnx",
+    ]
+    missing = []
+    for p in required:
+        if p.is_file():
+            continue
+        try:
+            missing.append(str(p.relative_to(_REPO_ROOT)))
+        except ValueError:
+            missing.append(str(p))
+    if missing:
+        return False, f"Missing FASHN weights: {', '.join(missing)}"
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("fashn_vton") is None:
+            return False, "fashn_vton not installed"
+    except Exception:  # noqa: BLE001
+        return False, "fashn_vton not installed"
+    try:
+        import torch
+    except ImportError:
+        return False, "torch not installed"
+    if not torch.cuda.is_available():
+        return False, "No GPU available"
+    return True, "ok"
+
+
+def _get_fashn_pipe():
+    with _PIPE_LOCK:
+        if _fashn_state["pipe"] is not None:
+            return _fashn_state["pipe"]
+        _ensure_parser_stub()
+        from fashn_vton import TryOnPipeline
+
+        pipe = TryOnPipeline(weights_dir=str(FASHN_DIR))
+        _fashn_state["pipe"] = pipe
+        logger.info("FASHN VTON v1.5 loaded from %s (segmentation_free, parser stubbed)", FASHN_DIR)
+        return pipe
+
+
+def compose_tryon_fashn(
+    base_path: Path,
+    garment_path: Path,
+    audience: str,
+    garment_type: str,
+    long_side: int = 2048,
+    background: str = "white",
+    ethnicity: str = "western_europe",
+) -> Image.Image:
+    from engine_sdxl import (
+        _remove_background,
+        align_garment_to_pose,
+        crop_garment_to_content,
+        infer_auto_garment_type,
+        intersect_mask_with_garment_alpha,
+    )
+    from platform_presets import (
+        clothing_mask,
+        detect_garment_extent,
+        force_white_background,
+        foreground_mask,
+        limit_mask_to_subject,
+        reapply_garment_detail,
+    )
+    from preserve_refit import protect_inverse_refit
+    from prewhiten import prewhiten_input
+
+    base_img = Image.open(base_path).convert("RGB")
+    garment_img = Image.open(garment_path).convert("RGB")
+    base_img, pw_base = prewhiten_input(base_img)
+    if pw_base.get("status") not in ("applied", "already_white", "disabled"):
+        logger.warning("base prewhiten not applied: %s", pw_base.get("reason"))
+    if os.environ.get("VTON_PREWHITEN_GARMENT", "1") == "0":
+        pw_garment = {"status": "disabled", "reason": "VTON_PREWHITEN_GARMENT=0"}
+    else:
+        garment_img, pw_garment = prewhiten_input(garment_img)
+
+    garment_img = crop_garment_to_content(garment_img)
+
+    garment_extent = None
+    try:
+        garment_extent = detect_garment_extent(garment_img)
+    except Exception:  # noqa: BLE001
+        logger.debug("detect_garment_extent failed; using defaults")
+    if garment_type == "auto":
+        garment_type = infer_auto_garment_type(garment_extent)
+
+    category = fashn_category(garment_type)
+    seed = int(os.environ.get("VTON_SEED", "42"))
+    steps = int(os.environ.get("VTON_FASHN_STEPS", "30"))
+    guidance = float(os.environ.get("VTON_FASHN_GUIDANCE", "1.5"))
+
+    # Provider 层(§00 L3): 生成源可插拔, 本地 FASHN 只是默认 Provider。
+    # Aidge 出图与本地出图共用同一条 POSTFX 链(protect/preserve)——
+    # 模型是耗材, 路由是资产(§07)。aidge 失败上抛, 由 engine 落 SDXL/
+    # composite 降级链并记 degraded 原因。
+    from tryon_provider import active_provider, aidge_generate
+
+    result = None
+    if active_provider() == "aidge":
+        result = aidge_generate(base_img, garment_img, garment_type)
+        result.info["engine"] = "aidge-aitryon"
+    if result is None:
+        pipe = _get_fashn_pipe()
+        with _GPU_LOCK:
+            output = pipe(
+                person_image=base_img,
+                garment_image=garment_img,
+                category=category,
+                garment_photo_type="flat-lay",
+                num_timesteps=steps,
+                guidance_scale=guidance,
+                seed=seed,
+                segmentation_free=True,
+            )
+        result = output.images[0]
+    # 后续 resize/贴回/fromarray 会重建 Image 丢 info, 引擎标签与成本在此暂存。
+    _engine_tag = result.info.get("engine") or "fashn-vton"
+    _provider_cost = result.info.get("provider_cost_cent")
+    if result.mode != "RGB":
+        result = result.convert("RGB")
+
+    degraded_reasons: list[str] = []
+    warp_enabled = os.environ.get("VTON_WARP", "1") != "0"
+    pattern_on = os.environ.get("VTON_PATTERN_LOCK", "1") != "0"
+    lock_on = os.environ.get("VTON_LOCK_ID", "1") != "0"
+    # POSTFX 全链路开关: 0=跳过 protect/refit/anchor/ghost/inpaint/reapply 全
+    # 后处理 + 印花核心直贴, 交付 FASHN 原始生成(r14 GPU 视觉验收: s0_fashn_raw
+    # 比 final_2048 好——露肩结构变异/印花放大扭曲/边缘拖影全出自 POSTFX 净负)。
+    # 默认 1(启用全链路), 0 时 result 保持 FASHN 原样但做 CPU Lanczos 放大到
+    # long_side(SKU 像素下限), 元数据记 postfx=raw + delivery_tier=review。
+    postfx_on = os.environ.get("VTON_POSTFX", "1") != "0"
+    detail_applied = False
+    keep_mask = None
+    paste_mask = None
+    cloth_ref = None
+    cloth_ref_alpha = None
+    pending_print_warp = None
+    if postfx_on and (pattern_on or lock_on) and warp_enabled:
+        try:
+            subj = foreground_mask(result)
+            shared = clothing_mask(
+                result,
+                garment_type=garment_type,
+                garment_extent=garment_extent,
+                subject_mask=subj,
+            )
+            drawn_mask = limit_mask_to_subject(shared, subj) if shared is not None else None
+            if drawn_mask is not None:
+                # 肩部带补全: 长发遮肩/脸区下扩余量会把衣服区顶行啃到肩部行
+                # 以下, TPS 对齐/贴回/保护全以顶行为准 → 整件衣下移, 肩部
+                # 落基模像素(袖子/领口变色, 视觉验收"肩膀往下一点才开始贴")。
+                # 用 pose 肩行把空档补回; 失败不阻断(保持未补全掩膜)。
+                try:
+                    from platform_presets import shoulder_complete_mask
+
+                    _completed = shoulder_complete_mask(drawn_mask, result, garment_extent, subject_mask=subj)
+                    if _completed is not drawn_mask:
+                        drawn_mask = _completed
+                except Exception:
+                    logger.exception("FASHN shoulder complete failed; keeping uncompleted mask")
+                    degraded_reasons.append("FASHN shoulder complete failed")
+            refit = None
+            if os.environ.get("VTON_FASHN_PRINT_ALIGN", "drawn") == "drawn" and drawn_mask is not None:
+                from preserve_refit import refit_cloth_to_drawn_garment
+
+                refit = refit_cloth_to_drawn_garment(garment_img, result.size, drawn_mask)
+            if refit is not None:
+                # 贴印对齐生成几何: 平铺衣 TPS 重投到 FASHN 画的衣服 bbox;
+                # 检测区即衣服边界, 纯裁剪(clip, 无并集); 贴印/保真分与衣服
+                # 保护三 mask 解耦。
+                cloth_ref, cloth_ref_alpha = refit
+                from preserve_refit import clip_mask_to_garment_alpha
+
+                keep_mask = clip_mask_to_garment_alpha(drawn_mask, cloth_ref_alpha)
+                if pattern_on:
+                    # 印花贴回推迟到最终分辨率: (a) 576 原生画布贴印会被
+                    # 末尾 2.67x LANCZOS 放大拉糊(r8); (b) 印花核心检测也
+                    # 必须在最终分辨率做 —— 576 下印花笔触被 8x 降采样混进
+                    # 底色, 检测只剩空心环(真实数据内区 NCC -0.69)。实心
+                    # 款回退同样在全分辨率整件贴回, 质量不降级。
+                    _dm = np.asarray(drawn_mask)
+                    if _dm.ndim == 3:
+                        _dm = _dm[..., 0]
+                    pending_print_warp = _dm
+                    paste_mask = None
+                else:
+                    paste_mask = keep_mask
+            else:
+                # 模板对齐(legacy 回退): warp 平铺衣到身体模板先验,
+                # 并集再裁剪(intersect)兜住宽松款悬垂面料。
+                warp_canvas = max(result.size)
+                cloth_ref, cloth_ref_alpha = align_garment_to_pose(
+                    garment_img,
+                    audience,
+                    ethnicity,
+                    garment_type,
+                    warp_canvas,
+                )
+                if cloth_ref.size != result.size:
+                    cloth_ref = cloth_ref.resize(result.size, Image.Resampling.LANCZOS)
+                    if cloth_ref_alpha is not None:
+                        cloth_ref_alpha = cloth_ref_alpha.resize(result.size, Image.Resampling.BILINEAR)
+                keep_mask, _kept = intersect_mask_with_garment_alpha(drawn_mask, cloth_ref_alpha)
+                paste_mask = keep_mask
+            if pattern_on and paste_mask is not None:
+                result = reapply_garment_detail(
+                    result,
+                    cloth_ref,
+                    paste_mask,
+                    pattern_lock=True,
+                    ref_alpha=cloth_ref_alpha,
+                )
+                detail_applied = True
+        except Exception:
+            logger.exception("FASHN pattern_lock/lock failed; keeping FASHN pixels")
+            degraded_reasons.append("FASHN pattern_lock/lock failed")
+
+    # 保护贴回: keep_mask 外(人脸/发丝/手/露肤手臂/背景)贴回源图像素,
+    # keep_mask 内保留 FASHN 像素 + 贴印。手臂不会变白、胸口不会变白、发丝不会糊。
+    # POSTFX=0 时跳过(直接交付 FASHN 原样)。
+    if postfx_on and lock_on and keep_mask is not None:
+        try:
+            _feather = int(os.environ.get("VTON_PROTECT_FEATHER", "4"))
+            result = protect_inverse_refit(result, base_img, keep_mask, feather_px=_feather)
+        except Exception:
+            logger.exception("FASHN protect_inverse_refit failed; keeping FASHN pixels")
+            degraded_reasons.append("FASHN protect_inverse_refit failed")
+
+    # 印花保真分 + 交付档位: 贴印区(paste_mask)内 warp 参考与结果的灰度相关。
+    # pattern_lock 生效 → 高分 auto; 花纹/字母被重画或错位 → 低分 review。
+    # 只算不写: 后续背景/缩放会替换 Image 对象丢掉 .info, 元数据统一在
+    # 尾部元数据块写入(与 engine.py 同序), 否则 print_fidelity 会变 null。
+    _pf_val = None
+    _tier_val = None
+    if paste_mask is not None and cloth_ref is not None:
+        try:
+            from quality_gate import delivery_tier, print_fidelity_score
+
+            _pf_val = print_fidelity_score(result, cloth_ref, paste_mask)
+            _tier_val = delivery_tier(_pf_val, sku_has_text=False)
+        except Exception:
+            logger.exception("FASHN print fidelity scoring failed; tier not set")
+
+    # POSTFX=0 时跳过 protect/refit/anchor/ghost/inpaint/reapply 全后处理
+    # (r14 GPU 视觉验收: s0_fashn_raw 比 final_2048 好——露肩结构变异/印花
+    # 放大扭曲/边缘拖影全出自 POSTFX 净负)。但 SKU 交付有像素下限, 故 RAW
+    # 档仍做 CPU Lanczos 等比放大到 long_side(与 POSTFX 链的 resize 同款,
+    # 无 GPU/重绘), 跳过印花核心直贴。元数据记 postfx=raw + delivery_tier,
+    # 走 REVIEW 档由运营视觉验收后采用落 PROD。
+    if postfx_on:
+        if background == "transparent":
+            result = _remove_background(result)
+        elif background == "white":
+            if result.mode == "RGBA":
+                bg = Image.new("RGB", result.size, (255, 255, 255))
+                bg.paste(result, mask=result.split()[-1])
+                result = bg
+            else:
+                result = result.convert("RGB")
+            subj_mask = foreground_mask(result)
+            result = force_white_background(result, subject_mask=subj_mask)
+
+        rw, rh = result.size
+        scale = long_side / max(rw, rh)
+        if abs(scale - 1) > 0.01:
+            result = result.resize((int(rw * scale), int(rh * scale)), Image.Resampling.LANCZOS)
+    else:
+        # RAW 档交付: 背景归一(白底/去底) + CPU Lanczos 放大到 SKU 像素下限,
+        # 不跑印花核心直贴(净负)。放大只在长边不足时发生, 已达标则保持原样。
+        if background == "transparent":
+            result = _remove_background(result)
+        elif background == "white":
+            if result.mode == "RGBA":
+                bg = Image.new("RGB", result.size, (255, 255, 255))
+                bg.paste(result, mask=result.split()[-1])
+                result = bg
+            else:
+                result = result.convert("RGB")
+        rw, rh = result.size
+        if max(rw, rh) < long_side:
+            scale = long_side / max(rw, rh)
+            result = result.resize((int(rw * scale), int(rh * scale)), Image.Resampling.LANCZOS)
+        # RAW 档: 无印花核心直贴 → 无保真分可度量, 直接进 REVIEW 人工验收
+        _tier_val = "review"
+
+    # 印花核心直贴(最终分辨率): 放大后的成图上重投 + 核心检测 + 贴印,
+    # 印花笔触保参考原样清晰度(hf/folds 关, 不受生成纹理污染); 保真分
+    # 同步在成图分辨率上度量。核心检测只在最终分辨率做一次(576 下印花
+    # 笔触被 8x 降采样混进底色只剩空心环); 实心款(无核心)回退整件贴回
+    # 同样在全分辨率, 质量较 r8 低分辨率贴印只升不降。模板路径不变。
+    # POSTFX=0 时 skip 印花核心直贴全链路(pending_print_warp 保持 None 不
+    # 赋值, 本块自然跳过); 元数据记 postfx=raw 供 REVIEW 视觉验收。
+    if postfx_on and pending_print_warp is not None:
+        try:
+            from preserve_refit import clip_mask_to_garment_alpha as _clip_fn
+            from preserve_refit import print_core_mask as _core_fn
+            from preserve_refit import refit_cloth_to_drawn_garment as _refit_fn
+
+            _dm_low = pending_print_warp
+            if _dm_low.shape[::-1] != result.size:
+                _dm_full = np.array(
+                    Image.fromarray(_dm_low.astype(np.uint8)).resize(result.size, Image.Resampling.NEAREST)
+                )
+                if _dm_full.ndim == 3:
+                    _dm_full = _dm_full[..., 0]
+            else:
+                _dm_full = _dm_low
+            refit_full = _refit_fn(garment_img, result.size, _dm_full)
+            if refit_full is not None:
+                cloth_ref_full, alpha_full = refit_full
+                keep_full = _clip_fn(_dm_full, alpha_full)
+                core_full = _core_fn(cloth_ref_full, keep_full)
+                if core_full is not None and np.asarray(core_full).max() > 0:
+                    # 印花核心=参考原样: light/hf/folds 全关 —— 印花场内 FASHN
+                    # 的鬼影笔触让 LF 明暗场尖峰(NCC 实测 -0.4), 恒等贴回
+                    # 保真分=1.0(本地全链路实证), 场外仍保留身体光影褶皱。
+                    # content_mask=keep: 白墨印花在 alpha 上是透明洞(garment_alpha
+                    # 与画布同色判定, 满印墨迹网触边, 拓扑内外判定无解), alpha
+                    # 内容门会跳过笔触留鬼影; keep(drawn 裁 alpha 膨胀)衣料
+                    # 语义完整。
+                    paste_full, core_kwargs = (
+                        core_full,
+                        {
+                            "light_strength": 0.0,
+                            "hf_strength": 0.0,
+                            "fold_gain": 0.0,
+                            "content_mask": keep_full,
+                            # 细笔触印花羽化 1px: 鬼场/整件贴回 5px 羽化平滑
+                            # 大块接缝, 但核心场恒等贴印的印花笔触本身仅 3-4px
+                            # 宽, 5px 距离场把笔触 alpha 压到 0.2-0.4, 白墨
+                            # 印花半透发灰(r10 GPU 逐成分 NCC 实测)。identity
+                            # 贴印的 crisp 印花边缘语义本来就该干净利落。
+                            "feather_px": 1.0,
+                        },
+                    )
+                else:
+                    paste_full, core_kwargs = keep_full, {}
+                # transparent 路径此时已是 RGBA: 贴回在 RGB 上做再装回
+                # alpha, 透明信息不因贴印丢失。
+                _alpha_ch = result.split()[-1] if result.mode == "RGBA" else None
+                _rgb_result = result.convert("RGB")
+                if core_full is not None:
+                    # 鬼场检测必须先于色调匹配: 鬼影亮笔触(+178 vs 衣身 94)
+                    # 在 keep 内占 ~10%, 采样区含它会污染中位数(r11 GPU 实测
+                    # 采样中位数 104 vs 真衣身 52, 匹配参考亮 +47, 擦除带
+                    # 只修一半)。ghost 检测只依赖 gen/cloth_ref/keep, 与
+                    # 色调匹配无依赖, 顺序可安全对调。
+                    try:
+                        from preserve_refit import ghost_print_mask as _ghost_fn
+
+                        ghost_full = _ghost_fn(_rgb_result, cloth_ref_full, keep_full, exclude_mask=core_full)
+                    except Exception:
+                        logger.exception("FASHN ghost print detect failed; skipping erase")
+                        ghost_full = None
+                        degraded_reasons.append("FASHN ghost print detect failed")
+                    # 色调匹配(r10 GPU 实测: gen 衣身 [117,103,69] vs 平铺 ref
+                    # [220,206,168], 差百余灰阶): 直接贴参考, 鬼场擦除带与
+                    # 核心场内衣料都比生成图衣身亮 +100 → 视觉验收"印花周
+                    # 围一圈发白发光轮廓带"。先统一把参考逐通道平移到生成
+                    # 图衣身色调; 鬼场/核心场分别按各自语义取用。采样区
+                    # 同时避开核心场与鬼场(各自外扩余量由函数内部自适应)。
+                    _avoid_list = [np.asarray(core_full)]
+                    if ghost_full is not None and np.asarray(ghost_full).max() > 0:
+                        _avoid_list.append(np.asarray(ghost_full))
+                    try:
+                        from preserve_refit import match_ref_tone as _tone_fn
+
+                        _ref_matched = _tone_fn(_rgb_result, cloth_ref_full, keep_full, avoid_mask=_avoid_list)
+                    except Exception:
+                        logger.exception("FASHN tone match failed; using raw ref")
+                        _ref_matched = cloth_ref_full
+                    # 鬼影擦除(核心场外): FASHN 按自己的几何摆放印花(实测
+                    # 偏上), 核心场只盖 TPS 位置, 生成图的整套鬼影笔触
+                    # 暴露在场外(视觉验收: 上方半透明重影)。两级擦除:
+                    # ①ghost_inpaint_pass 局部修补 —— 凸包恒等贴回会把
+                    # 笔画周边的自然袖料整块拍平(r11 GPU 视觉验收"衣袖
+                    # 失真", 袖区 26.5k px), Telea 只从笔画周边取色, 袖褶
+                    # 光影全保; ②密网 Telea 填不净时 strict 残余检测
+                    # (基色=色调匹配参考 + 逐成分局部基色复核)兜底小范围
+                    # 贴回。排除边界统一 core+0: 核心贴印(alpha=1 +
+                    # feather 1px)在其后整体重贴核心场, 擦除越进核心场
+                    # 的部分不透出; [core, core+4) 环内的笔画必须允许修补,
+                    # 裁掉该环会残留鬼影(r12 重放实测擦除带 +17 灰阶;
+                    # 此前"涂改核心场边缘会让内容门跳过"系 NCC 度量在
+                    # 恒定白笔画上退化的误判)。实心款回退分支整件已贴回,
+                    # 无需此步。
+                    try:
+                        if ghost_full is not None and np.asarray(ghost_full).max() > 0:
+                            from preserve_refit import ghost_inpaint_pass as _inpaint_fn
+                            from preserve_refit import ghost_strict_residual as _resid_fn
+
+                            _s1 = _inpaint_fn(_rgb_result, ghost_full, exclude_mask=core_full)
+                            _resid = _resid_fn(_s1, _ref_matched, keep_full, core_full, stroke_mask=ghost_full)
+                            if _resid is not None and np.asarray(_resid).max() > 0:
+                                # 兜底内容局部锚定: 全局匹配按整件布料中位
+                                # (含深色下摆 57-96)锚定; 兜底块落在亮胸口
+                                # (185-195)时贴暗布料 = 深色斑块(r13 GPU
+                                # 视觉验收"贴上去/整体下移")
+                                from preserve_refit import anchor_ref_local as _anchor_fn
+
+                                _ref_resid = _anchor_fn(
+                                    _s1,
+                                    _ref_matched,
+                                    keep_full,
+                                    _resid,
+                                    exclude_masks=[core_full, ghost_full],
+                                )
+                                _rgb_result = reapply_garment_detail(
+                                    _s1,
+                                    _ref_resid,
+                                    _resid,
+                                    pattern_lock=True,
+                                    ref_alpha=alpha_full,
+                                    light_strength=0.0,
+                                    hf_strength=0.0,
+                                    fold_gain=0.0,
+                                    content_mask=np.asarray(keep_full),
+                                )
+                            else:
+                                _rgb_result = _s1
+                    except Exception:
+                        logger.exception("FASHN ghost print erase failed; keeping current pixels")
+                        degraded_reasons.append("FASHN ghost print erase failed")
+                    # 核心场贴回参考混合: 白墨笔触保持原样(客观亮色), 场内
+                    # SKU 衣料像素换色调匹配版 —— 整场恒等会把凸包里的亮
+                    # 衣料(198+)拍上暗衣身(96), 印花一圈发光。
+                    # 布料底再局部锚定到 gen 贴回区周边净布料: 全局匹配的
+                    # 暗布料(94)贴亮胸口(185) = 413x300 深色矩形, "衣服
+                    # 像贴上去的/整体下移/衣领断层"(r13 GPU 视觉验收);
+                    # 笔触保持取自原始参考不受影响。
+                    try:
+                        from preserve_refit import anchor_ref_local as _anchor_fn
+                        from preserve_refit import blend_core_ref_tone as _blend_fn
+
+                        _ref_local = _anchor_fn(
+                            _rgb_result,
+                            _ref_matched,
+                            keep_full,
+                            core_full,
+                            exclude_masks=[ghost_full],
+                        )
+                        _core_ref = _blend_fn(cloth_ref_full, core_full, _ref_local)
+                    except Exception:
+                        logger.exception("FASHN core ref blend failed; using raw ref")
+                        _core_ref = cloth_ref_full
+                else:
+                    _ref_matched = None
+                    _core_ref = cloth_ref_full
+                result = reapply_garment_detail(
+                    _rgb_result,
+                    _core_ref,
+                    paste_full,
+                    pattern_lock=True,
+                    ref_alpha=alpha_full,
+                    **core_kwargs,
+                )
+                if _alpha_ch is not None:
+                    result = result.copy()
+                    result.putalpha(_alpha_ch)
+                detail_applied = True
+                from quality_gate import delivery_tier, print_fidelity_score
+
+                _pf_val = print_fidelity_score(result, cloth_ref_full, paste_full)
+                _tier_val = delivery_tier(_pf_val, sku_has_text=False)
+        except Exception:
+            logger.exception("FASHN full-res print paste failed; keeping current pixels")
+            degraded_reasons.append("FASHN full-res print paste failed")
+
+    degraded_reason = "; ".join(degraded_reasons)
+    result.info["engine"] = _engine_tag
+    if _provider_cost is not None:
+        result.info["provider_cost_cent"] = _provider_cost
+    result.info["engine_degraded"] = bool(degraded_reason)
+    result.info["degraded_reason"] = degraded_reason
+    result.info["detail_applied"] = detail_applied
+    result.info["lock_identity"] = lock_on and keep_mask is not None
+    result.info["postfx"] = "raw" if not postfx_on else "full"
+    result.info["fashn_category"] = category
+    result.info["prewhiten"] = {"base": pw_base, "garment": pw_garment}
+    if _pf_val is not None:
+        result.info["print_fidelity"] = _pf_val
+    if _tier_val is not None:
+        result.info["delivery_tier"] = _tier_val
+    return result
