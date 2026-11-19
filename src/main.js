@@ -87,6 +87,7 @@ function render() {
   }
   appRoot().innerHTML = dashboardView()
   bindDashboard()
+  bindPoster()
 }
 
 function loginView() {
@@ -119,6 +120,7 @@ function dashboardView() {
           <button data-view="bases" class="${state.view === 'bases' ? 'on' : ''}">${t('nav.bases')}</button>
           <button data-view="queue" class="${state.view === 'queue' ? 'on' : ''}">${t('nav.queue')}</button>
           <button data-view="embed" class="${state.view === 'embed' ? 'on' : ''}">${t('nav.embed')}</button>
+          <button data-view="poster" class="${state.view === 'poster' ? 'on' : ''}">Poster</button>
           <button id="lang-switch" class="${''}">${getLang() === 'zh' ? 'EN' : '中'}</button>
           <button id="logout" class="${''}">${t('nav.logout')}</button>
         </nav>
@@ -135,6 +137,7 @@ function dashboardView() {
       ${state.view === 'bases' ? basesView() : ''}
       ${state.view === 'queue' ? queueView() : ''}
       ${state.view === 'embed' ? embedView() : ''}
+      ${state.view === 'poster' ? posterView() : ''}
       ${state.previewJob ? previewModal() : ''}
       ${state.pushJob ? pushModal() : ''}
       ${state.batchPushOpen ? batchPushModal() : ''}
@@ -521,6 +524,211 @@ GET/POST/PATCH/DELETE /api/stores</div>
       </section>
     </div>
   `
+}
+
+function posterView() {
+  return `
+    <div class="grid">
+      <section class="panel">
+        <h3>Poster Render</h3>
+        <p class="hint">Pure CPU 2x PNG - no GPU, no model SDK. Template JSON in, poster out.</p>
+        <label>Width<input id="poster-w" type="number" value="800" min="100" max="4096" /></label>
+        <label>Height<input id="poster-h" type="number" value="800" min="100" max="4096" /></label>
+        <label>Layers JSON<textarea id="poster-layers" rows="6" placeholder='[{"id":"bg","type":"rect","x":0,"y":0,"width":800,"height":800,"fill":"#fff"},{"id":"t","type":"text","text":"SALE","x":40,"y":40,"fontSize":64,"color":"#e11"}]'></textarea></label>
+        <button class="btn gold" id="poster-render">Render Poster</button>
+        <button class="btn ghost" id="poster-estimate">Estimate Cost</button>
+        <div id="poster-result" class="hint" style="margin-top:12px"></div>
+        <div id="poster-preview" style="margin-top:12px"></div>
+      </section>
+      <section class="panel">
+        <h3>Job Actions</h3>
+        <p class="hint">SSE events, cancel/reroll, batch review.</p>
+        <label>Job ID<input id="act-jobid" placeholder="job-abc123" /></label>
+        <div class="row" style="margin:8px 0">
+          <button class="btn ghost small" id="act-sse">Subscribe SSE</button>
+          <button class="btn ghost small" id="act-cancel">Cancel</button>
+          <button class="btn ghost small" id="act-reroll">Reroll</button>
+          <button class="btn ghost small" id="act-reroute">Reroute</button>
+        </div>
+        <div id="sse-log" class="code" style="max-height:200px;overflow:auto;font-size:11px"></div>
+        <h3 style="margin-top:18px">Batch Export</h3>
+        <label>Batch ID<input id="exp-batchid" placeholder="batch-001" /></label>
+        <label>Boards (comma-sep)<input id="exp-boards" value="main_1x1,detail_3x4" /></label>
+        <label>Formats<input id="exp-fmts" value="png,webp" /></label>
+        <button class="btn gold" id="exp-submit">Export</button>
+        <div id="exp-result" class="hint" style="margin-top:8px"></div>
+        <h3 style="margin-top:18px">Batch Review</h3>
+        <textarea id="review-items" rows="4" placeholder='[{"jobId":"j1","verdict":"pass"},{"jobId":"j2","verdict":"reject","reasonCode":"E1"}]'></textarea>
+        <button class="btn gold" id="review-submit">Submit Review</button>
+        <div id="review-result" class="hint" style="margin-top:8px"></div>
+      </section>
+    </div>
+  `
+}
+
+function bindPoster() {
+  const renderBtn = document.querySelector('#poster-render')
+  if (renderBtn) {
+    renderBtn.onclick = async () => {
+      const w = parseInt(document.querySelector('#poster-w').value) || 800
+      const h = parseInt(document.querySelector('#poster-h').value) || 800
+      let layers = []
+      try { layers = JSON.parse(document.querySelector('#poster-layers').value || '[]') } catch {}
+      const resultEl = document.querySelector('#poster-result')
+      const previewEl = document.querySelector('#poster-preview')
+      try {
+        const data = await api('/api/poster/render', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ width: w, height: h, layers }),
+        })
+        resultEl.textContent = `Rendered: ${data.size_bytes} bytes, ${data.meta?.layer_count ?? 0} layers (${data.meta?.types?.join(', ') || '-'})`
+        if (data.png_b64) {
+          previewEl.innerHTML = `<img src="data:image/png;base64,${data.png_b64}" style="max-width:400px;border:1px solid #333;border-radius:4px" />`
+        }
+      } catch (err) {
+        resultEl.textContent = err.message
+      }
+    }
+  }
+
+  const estBtn = document.querySelector('#poster-estimate')
+  if (estBtn) {
+    estBtn.onclick = async () => {
+      const rows = [{ sku: 'DEMO-001', img_top: 'test.png' }]
+      try {
+        const data = await api('/api/jobs/estimate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows, provider: 'fashn_local' }),
+        })
+        const resultEl = document.querySelector('#poster-result')
+        resultEl.textContent = `Estimate: ${data.total} total, ${data.run} run, ${data.cent} cents, ~${data.eta_sec}s, provider=${data.provider}`
+      } catch (err) {
+        document.querySelector('#poster-result').textContent = err.message
+      }
+    }
+  }
+
+  const sseBtn = document.querySelector('#act-sse')
+  if (sseBtn) {
+    sseBtn.onclick = async () => {
+      const jobId = document.querySelector('#act-jobid').value.trim()
+      if (!jobId) return
+      const logEl = document.querySelector('#sse-log')
+      logEl.textContent = 'Connecting to /api/jobs/' + jobId + '/events ...'
+      try {
+        const resp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/events`, {
+          headers: { Authorization: `Bearer ${state.token}` },
+        })
+        const reader = resp.body.getReader()
+        const dec = new TextDecoder()
+        let buf = ''
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += dec.decode(value, { stream: true })
+          const parts = buf.split('\n\n')
+          buf = parts.pop() || ''
+          for (const p of parts) {
+            if (p.trim()) { logEl.textContent += '\n' + p.trim().substring(0, 200) }
+          }
+        }
+      } catch (err) {
+        logEl.textContent += '\n[error] ' + err.message
+      }
+    }
+  }
+
+  const cancelBtn = document.querySelector('#act-cancel')
+  if (cancelBtn) {
+    cancelBtn.onclick = async () => {
+      const jobId = document.querySelector('#act-jobid').value.trim()
+      if (!jobId) return
+      try {
+        const data = await api(`/api/jobs/${encodeURIComponent(jobId)}:act`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ act: 'cancel' }),
+        })
+        document.querySelector('#sse-log').textContent += '\n[cancel] ' + JSON.stringify(data)
+      } catch (err) {
+        document.querySelector('#sse-log').textContent += '\n[cancel err] ' + err.message
+      }
+    }
+  }
+  const rerollBtn = document.querySelector('#act-reroll')
+  if (rerollBtn) {
+    rerollBtn.onclick = async () => {
+      const jobId = document.querySelector('#act-jobid').value.trim()
+      if (!jobId) return
+      try {
+        const data = await api(`/api/jobs/${encodeURIComponent(jobId)}:act`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ act: 'reroll' }),
+        })
+        document.querySelector('#sse-log').textContent += '\n[reroll] ' + JSON.stringify(data)
+      } catch (err) {
+        document.querySelector('#sse-log').textContent += '\n[reroll err] ' + err.message
+      }
+    }
+  }
+  const rerouteBtn = document.querySelector('#act-reroute')
+  if (rerouteBtn) {
+    rerouteBtn.onclick = async () => {
+      const jobId = document.querySelector('#act-jobid').value.trim()
+      if (!jobId) return
+      try {
+        const data = await api(`/api/jobs/${encodeURIComponent(jobId)}:act`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ act: 'reroute' }),
+        })
+        document.querySelector('#sse-log').textContent += '\n[reroute] ' + JSON.stringify(data)
+      } catch (err) {
+        document.querySelector('#sse-log').textContent += '\n[reroute err] ' + err.message
+      }
+    }
+  }
+
+  const expBtn = document.querySelector('#exp-submit')
+  if (expBtn) {
+    expBtn.onclick = async () => {
+      const batchId = document.querySelector('#exp-batchid').value.trim()
+      if (!batchId) return
+      const boards = document.querySelector('#exp-boards').value.split(',').map(s => s.trim()).filter(Boolean)
+      const fmts = document.querySelector('#exp-fmts').value.split(',').map(s => s.trim()).filter(Boolean)
+      try {
+        const data = await api(`/api/batches/${encodeURIComponent(batchId)}:export`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ boards, fmts }),
+        })
+        document.querySelector('#exp-result').textContent = JSON.stringify(data)
+      } catch (err) {
+        document.querySelector('#exp-result').textContent = err.message
+      }
+    }
+  }
+
+  const reviewBtn = document.querySelector('#review-submit')
+  if (reviewBtn) {
+    reviewBtn.onclick = async () => {
+      let items = []
+      try { items = JSON.parse(document.querySelector('#review-items').value || '[]') } catch {}
+      try {
+        const data = await api('/api/reviews:batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items }),
+        })
+        document.querySelector('#review-result').textContent = JSON.stringify(data)
+      } catch (err) {
+        document.querySelector('#review-result').textContent = err.message
+      }
+    }
+  }
 }
 
 function baseCards() {
