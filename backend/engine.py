@@ -10,7 +10,9 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
 logger = logging.getLogger("atelier.engine")
 
-_GPU_LOCK = threading.Lock()
+_GPU_CONCURRENCY = max(1, int(os.getenv("GPU_PARALLELISM", "3")))
+_GPU_LOCK = threading.BoundedSemaphore(_GPU_CONCURRENCY)
+_GPU_SERIAL = _GPU_CONCURRENCY == 1
 _PIPE_LOCK = threading.Lock()
 
 TORSOS = {

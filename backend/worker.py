@@ -15,7 +15,9 @@ logger = logging.getLogger("atelier.worker")
 def _default_workers() -> int:
     from os import cpu_count, getenv
 
-    return max(1, min(int(getenv("WORKERS", "4")), cpu_count() or 4))
+    workers = max(1, min(int(getenv("WORKERS", "4")), cpu_count() or 4))
+    gpu_parallelism = max(1, int(getenv("GPU_PARALLELISM", "3")))
+    return max(workers, gpu_parallelism)
 
 
 def _base_file(base: dict) -> Path:

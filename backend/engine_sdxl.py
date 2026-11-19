@@ -27,7 +27,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("atelier.engine_sdxl")
 
-_GPU_LOCK = threading.Lock()
+_GPU_CONCURRENCY = max(1, int(os.getenv("GPU_PARALLELISM", "3")))
+_GPU_LOCK = threading.BoundedSemaphore(_GPU_CONCURRENCY)
+_GPU_SERIAL = _GPU_CONCURRENCY == 1
 _PIPE_LOCK = threading.Lock()
 _sdxl_state: dict = {
     "pipe": None,
@@ -1402,7 +1404,15 @@ def compose_tryon_sdxl(
     # 采样(含 denoise)在 autocast 下跑;VAE 解码移出 autocast 并以 fp32 执行,
     # 否则 SDXL fp16 VAE 解码溢出产生 NaN/黑图。
     with _GPU_LOCK, torch.no_grad(), torch.amp.autocast(device_type="cuda" if device.type == "cuda" else "cpu"):
-        latents = pipe(**{**pipe_kwargs, "output_type": "latent"}).images
+        try:
+            latents = pipe(**{**pipe_kwargs, "output_type": "latent"}).images
+        except RuntimeError as _err:
+            if "out of memory" in str(_err).lower():
+                torch.cuda.empty_cache()
+                logger.warning("CUDA OOM during SDXL sampling, retrying with cache cleared")
+                latents = pipe(**{**pipe_kwargs, "output_type": "latent"}).images
+            else:
+                raise
     with torch.no_grad():
         decoded = pipe.vae.decode(latents.to(torch.float32) / pipe.vae.config.scaling_factor, return_dict=False)[0]
     result = pipe.image_processor.postprocess(decoded, output_type="pil")[0]
