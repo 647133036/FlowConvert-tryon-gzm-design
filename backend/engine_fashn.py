@@ -10,9 +10,16 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+try:
+    import torch
+except ImportError:
+    torch = None
+
 logger = logging.getLogger("atelier.engine_fashn")
 
-_GPU_LOCK = threading.Lock()
+_GPU_CONCURRENCY = max(1, int(os.getenv("GPU_PARALLELISM", "3")))
+_GPU_LOCK = threading.BoundedSemaphore(_GPU_CONCURRENCY)
+_GPU_SERIAL = _GPU_CONCURRENCY == 1
 _PIPE_LOCK = threading.Lock()
 _fashn_state: dict = {"pipe": None}
 
@@ -229,16 +236,35 @@ def compose_tryon_fashn(
     if result is None:
         pipe = _get_fashn_pipe()
         with _GPU_LOCK:
-            output = pipe(
-                person_image=base_img,
-                garment_image=garment_img,
-                category=category,
-                garment_photo_type="flat-lay",
-                num_timesteps=steps,
-                guidance_scale=guidance,
-                seed=seed,
-                segmentation_free=True,
-            )
+            try:
+                output = pipe(
+                    person_image=base_img,
+                    garment_image=garment_img,
+                    category=category,
+                    garment_photo_type="flat-lay",
+                    num_timesteps=steps,
+                    guidance_scale=guidance,
+                    seed=seed,
+                    segmentation_free=True,
+                )
+            except RuntimeError as _err:
+                _msg = str(_err).lower()
+                _is_oom = "out of memory" in _msg or ("cuda" in _msg and "oom" in _msg)
+                if torch is not None and _is_oom:
+                    torch.cuda.empty_cache()
+                    logger.warning("CUDA OOM during FASHN inference, retrying with cache cleared")
+                    output = pipe(
+                        person_image=base_img,
+                        garment_image=garment_img,
+                        category=category,
+                        garment_photo_type="flat-lay",
+                        num_timesteps=steps,
+                        guidance_scale=guidance,
+                        seed=seed,
+                        segmentation_free=True,
+                    )
+                else:
+                    raise
         result = output.images[0]
     # 后续 resize/贴回/fromarray 会重建 Image 丢 info, 引擎标签与成本在此暂存。
     _engine_tag = result.info.get("engine") or "fashn-vton"
