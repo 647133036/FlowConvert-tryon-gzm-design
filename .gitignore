@@ -36,3 +36,13 @@ ms_sdxl_test.png
 ms_space_smoke.png
 old_result_preview.jpg
 test_v017_cpu.py
+*(1).html
+garment_ref.jpg
+garment_used.jpg
+tryon_*.jpg
+tryon_*.png
+gpu_3jobs_baseline.png
+gpu_solo_same_garment.jpg
+job_*.jpg
+job_*.png
+job_*_preview.jpg
