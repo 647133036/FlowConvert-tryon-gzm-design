@@ -439,3 +439,15 @@ Entries discovered by the Agent during task execution should follow this format:
   - 冒烟测试: 提交 tryon job 用 `audience=auto` + `garment_type=upper` (不是 "tops"), 400 错误时检查 audience/garment_type 枚举值
   - GPU 冒烟通过: job_6b09bdbb5c5a, engine=fashn-vton, ~50s, 5.7GB VRAM
   - 闲置休眠: 服务器拉取后会自动休眠, 需 SSH 唤醒
+
+[IDM-VTON 子模块已清除]
+- Date: 2026-11-19
+- Context: Discovered by Agent while cleaning up unused dependencies on branch 261119-feat-enhancements
+- Category: Environment Configuration
+- Instructions:
+  - IDM-VTON (CC BY-NC-SA 4.0) 已从 .gitmodules + git index 移除 (commit cc1096f)，本地目录已删除
+  - 商用路径：从未使用 IDM-VTON 权重，商用引擎为 FASHN VTON v1.5 + SDXL + 百炼/VIAPI
+  - 训练路径：从头训练的 LoRA/ControlNet，训练代码在 training/，不依赖 IDM-VTON 代码或权重
+  - 仅借鉴思路：garment warp（衣服区域 warp 对齐）、LF/HF 频率分离（PLTON 思路的 CPU 后处理实现）
+  - engine.py 里 29 处 idm 引用保留：_idm_vton_available() 检查路径存在性，路径不存在自动返回 False，无崩溃
+  - research 模式 (LICENSE_MODE=research) 如需 IDM-VTON 需手动 git clone 到 repo/IDM-VTON/
