@@ -1086,19 +1086,39 @@ def _idm_vton_engine(
     generator = torch.Generator(device=device).manual_seed(42)
 
     with _GPU_LOCK, torch.no_grad(), torch.amp.autocast(device_type="cuda"):
-        output = pipe(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            image=human_img,
-            mask_image=mask_img,
-            cloth=cloth_img,
-            width=target_w,
-            height=target_h,
-            num_inference_steps=30,
-            guidance_scale=2.0,
-            generator=generator,
-            output_type="pil",
-        )
+        try:
+            output = pipe(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                image=human_img,
+                mask_image=mask_img,
+                cloth=cloth_img,
+                width=target_w,
+                height=target_h,
+                num_inference_steps=30,
+                guidance_scale=2.0,
+                generator=generator,
+                output_type="pil",
+            )
+        except RuntimeError as _err:
+            if "out of memory" in str(_err).lower():
+                torch.cuda.empty_cache()
+                logger.warning("CUDA OOM during composite engine sampling, retrying")
+                output = pipe(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    image=human_img,
+                    mask_image=mask_img,
+                    cloth=cloth_img,
+                    width=target_w,
+                    height=target_h,
+                    num_inference_steps=30,
+                    guidance_scale=2.0,
+                    generator=generator,
+                    output_type="pil",
+                )
+            else:
+                raise
 
     result = output.images[0] if hasattr(output, "images") else output
 
