@@ -422,3 +422,20 @@ Entries discovered by the Agent during task execution should follow this format:
   - /api/poster/render 端点: POST 模板 JSON → 返回 png_b64 + meta (layer_count/visible_layers/types)
   - 海报排版走 CPU, 试衣/换图案/换背景走 GPU (/api/jobs), 两者在 GzmDesign AiPanel 里统一入口
   - gzm-design 测试未纳入主仓 vitest (独立 package.json), 主仓回归门仍 496+14 passed
+
+[GPU 服务器 4090 D 部署与冒烟]
+- Date: 2026-11-19
+- Context: Discovered by Agent while deploying FASHN stack to GPU server for 12-condition smoke test
+- Category: Operations & Deployment
+- Instructions:
+  - GPU 服务器: `sshpass -p 'xBE8jCCrvkPxtZI+dzwfYsEavG0aAc4K' ssh -p 46041 root@connect.cqa1.seetacloud.com`
+  - 代码目录: `/root/vton/repo/` (从 workspace rsync/tar 同步, 排除 models/node_modules/.git)
+  - 模型目录: `/root/vton/repo/models/` (34G, FASHN 1.9GB + SDXL + dwpose ONNX), 符号链接 `/root/vton/models -> /root/vton/repo/models` (engine_fashn.py 的 `_REPO_ROOT` 解析到 `/root/vton/`)
+  - Python: `~/miniconda3/bin/python` (3.10.12), pip 用 `~/miniconda3/bin/pip`
+  - FASHN: `fashn-vton 1.5.0` (editable install from `/root/autodl-tmp/fashn-vton-1.5`), 需 `PYTHONPATH=/root/vton/repo:/root/autodl-tmp/fashn-vton-1.5/src`
+  - 关键依赖: `fashn-human-parser 0.1.1` + `onnxruntime-gpu 1.23.2` (CUDA provider) + `numpy 1.26.4` (scipy 兼容)
+  - 启动脚本: `/root/vton/repo/start_gpu.sh` (LICENSE_MODE=commercial, FASHN_DIR, PYTHONPATH, uvicorn :8000)
+  - 基座图片: `/root/vton/repo/data/bases/` (5 张: women/men/girl/boy/baby _01.png), 需从 workspace/backend/data/bases/ 手动同步
+  - 冒烟测试: 提交 tryon job 用 `audience=auto` + `garment_type=upper` (不是 "tops"), 400 错误时检查 audience/garment_type 枚举值
+  - GPU 冒烟通过: job_6b09bdbb5c5a, engine=fashn-vton, ~50s, 5.7GB VRAM
+  - 闲置休眠: 服务器拉取后会自动休眠, 需 SSH 唤醒
