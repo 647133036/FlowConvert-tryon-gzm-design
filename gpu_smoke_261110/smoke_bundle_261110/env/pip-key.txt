@@ -1,0 +1,17 @@
+accelerate                     1.14.0
+diffusers                      0.40.0
+einops                         0.6.1
+fashn-vton                     1.5.0           /root/autodl-tmp/fashn-vton-1.5
+numba                          0.57.1
+onnxruntime                    1.15.1
+opencv-python                  4.8.0.76
+opencv-python-headless         4.7.0.72
+rembg                          2.0.50
+safetensors                    0.8.0
+torch                          2.13.0
+torchaudio                     2.11.0+cu130
+torchdiffeq                    0.2.3
+torchsde                       0.2.5
+torchvision                    0.15.2
+transformers                   5.20.2
+xformers                       0.0.21

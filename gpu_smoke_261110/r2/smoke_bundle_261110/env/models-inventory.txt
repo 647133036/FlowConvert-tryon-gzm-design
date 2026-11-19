@@ -1,0 +1,5 @@
+2.2G	/root/vton/repo/models/fashn
+9.0M	/root/vton/repo/models/mediapipe
+53M	/root/vton/repo/models/rtmpose
+31G	/root/vton/repo/models/sdxl
+168M	/root/vton/repo/models/seg

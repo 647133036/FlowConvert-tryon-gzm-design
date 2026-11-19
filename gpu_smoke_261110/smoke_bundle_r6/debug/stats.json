@@ -1,0 +1,43 @@
+{
+ "m_subject": {
+  "frac": 0.0,
+  "bbox": null,
+  "mean": 0.31
+ },
+ "m_shared": {
+  "frac": 0.161,
+  "bbox": [
+   164,
+   192,
+   409,
+   512
+  ],
+  "mean": 41.12
+ },
+ "m_drawn": {
+  "frac": 0.161,
+  "bbox": [
+   164,
+   192,
+   409,
+   512
+  ],
+  "mean": 40.99
+ },
+ "m_keep": {
+  "frac": 0.0083,
+  "bbox": [
+   178,
+   239,
+   386,
+   512
+  ],
+  "mean": 2.11
+ },
+ "m_paste": null,
+ "paste_fallback": "keep",
+ "fid_paste_s1": 0.4979,
+ "fid_paste_s2": 0.4979,
+ "fid_keep_s2": 0.4979,
+ "fid_keep_s1": 0.4979
+}
