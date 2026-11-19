@@ -274,7 +274,6 @@ export STORE_STAFF_PASSWORD="your-secure-password"
 # 1. 同步代码 + 模型
 git clone https://github.com/647133036/IDM-VTON-Builder.git
 cd IDM-VTON-Builder
-git submodule update --init --recursive --depth 1
 bash scripts/download_sdxl_weights.sh
 
 # 2. Python 环境 (Miniconda 3.10)
@@ -315,7 +314,7 @@ GPU 实测环境（2026-11）：RTX 4090 D 24GB / Driver 580.76.05 / CUDA 13.0 /
 | LICENSE_MODE | 引擎优先级 | 商用合规 |
 |---|---|---|
 | `commercial` | FASHN VTON v1.5 → SDXL Inpaint → 合成引擎（云端：百炼 / VIAPI 经 `VTON_PROVIDER` 路由，不可用自动回落本地） | 合规 |
-| `research` | IDM-VTON → 合成引擎 | 不合规 |
+| `research` | 合成引擎（如需 IDM-VTON 研究路径，手动 clone 到 repo/IDM-VTON/，需自行处理 CC BY-NC-SA 授权） | 不合规 |
 | 未设置 | 合成引擎 | 需确认 |
 
 ## SDXL 训练
@@ -461,7 +460,7 @@ POST /api/reviews:batch
 
 | 组件 | 许可证 | 商用 | 本项目使用方式 |
 |------|--------|------|----------------|
-| IDM-VTON 模型权重 | CC BY-NC-SA 4.0 | 禁止 | 仅借鉴 garment warp 思路，未使用其权重 |
+| IDM-VTON 模型权重 | CC BY-NC-SA 4.0 | 禁止 | 仅借鉴 garment warp 思路（LF/HF 频率分离的 CPU 后处理实现），未使用其代码或权重；已从仓库移除 |
 | FASHN VTON v1.5 | Apache 2.0 | 允许 | 商用主引擎（像素空间、TPS、无 mask）；parser 走零张量 stub |
 | FASHN DWPose / YOLOX | Apache 2.0 | 允许 | FASHN 人体/姿态解析权重 |
 | fashn-human-parser | NVIDIA Source Code License | 禁止 | 商用路径注入 stub，SegFormer 权重不下载 |
@@ -491,7 +490,7 @@ POST /api/reviews:batch
 ## 感谢
 
 - [FASHN](https://fashn.ai) — VTON v1.5 商用主引擎（像素空间，Apache 2.0）
-- [IDM-VTON](https://github.com/yisol/IDM-VTON)（ECCV 2024）— garment warp 思路借鉴
+- [IDM-VTON](https://github.com/yisol/IDM-VTON)（ECCV 2024）— garment warp 思路借鉴（未使用其代码或权重，已移除）
 - [RTMPose](https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose) — COCO 17 关键点
 - [PLTON](https://arxiv.org/abs/2401.11239) — LF/HF 频率分离思想
 - [Stable Diffusion XL](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0) / [ControlNet](https://github.com/lllyasviel/ControlNet) / [IP-Adapter](https://github.com/tencent-ailab/IP-Adapter)
