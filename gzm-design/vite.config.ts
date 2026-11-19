@@ -1,9 +1,11 @@
 import { defineConfig, loadEnv } from 'vite'
 import { resolve } from 'path'
+import vue from '@vitejs/plugin-vue'
 
 export default defineConfig(({ mode }) => {
   const e = loadEnv(mode, process.cwd())
   return {
+    plugins: [vue()],
     server: {
       port: 5174,
       allowedHosts: ['.monkeycode-ai.online'],
@@ -47,6 +49,8 @@ export default defineConfig(({ mode }) => {
         output: {
           manualChunks: {
             leafer: ['leafer-ui'],
+            vue: ['vue', 'pinia'],
+            arco: ['@arco-design/web-vue'],
           },
         },
       },
