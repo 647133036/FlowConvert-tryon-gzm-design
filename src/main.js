@@ -120,7 +120,7 @@ function dashboardView() {
           <button data-view="bases" class="${state.view === 'bases' ? 'on' : ''}">${t('nav.bases')}</button>
           <button data-view="queue" class="${state.view === 'queue' ? 'on' : ''}">${t('nav.queue')}</button>
           <button data-view="embed" class="${state.view === 'embed' ? 'on' : ''}">${t('nav.embed')}</button>
-          <button data-view="poster" class="${state.view === 'poster' ? 'on' : ''}">Poster</button>
+          <button data-view="poster" class="${state.view === 'poster' ? 'on' : ''}">${t('nav.poster')}</button>
           <button id="lang-switch" class="${''}">${getLang() === 'zh' ? 'EN' : '中'}</button>
           <button id="logout" class="${''}">${t('nav.logout')}</button>
         </nav>
@@ -526,40 +526,40 @@ GET/POST/PATCH/DELETE /api/stores</div>
   `
 }
 
-function posterView() {
+ function posterView() {
   return `
     <div class="grid">
       <section class="panel">
-        <h3>Poster Render</h3>
-        <p class="hint">Pure CPU 2x PNG - no GPU, no model SDK. Template JSON in, poster out.</p>
-        <label>Width<input id="poster-w" type="number" value="800" min="100" max="4096" /></label>
-        <label>Height<input id="poster-h" type="number" value="800" min="100" max="4096" /></label>
-        <label>Layers JSON<textarea id="poster-layers" rows="6" placeholder='[{"id":"bg","type":"rect","x":0,"y":0,"width":800,"height":800,"fill":"#fff"},{"id":"t","type":"text","text":"SALE","x":40,"y":40,"fontSize":64,"color":"#e11"}]'></textarea></label>
-        <button class="btn gold" id="poster-render">Render Poster</button>
-        <button class="btn ghost" id="poster-estimate">Estimate Cost</button>
+        <h3>${t('poster.title')}</h3>
+        <p class="hint">${t('poster.hint')}</p>
+        <label>${t('poster.w')}<input id="poster-w" type="number" value="800" min="100" max="4096" /></label>
+        <label>${t('poster.h')}<input id="poster-h" type="number" value="800" min="100" max="4096" /></label>
+        <label>${t('poster.layers')}<textarea id="poster-layers" rows="6" placeholder='[{"id":"bg","type":"rect","x":0,"y":0,"width":800,"height":800,"fill":"#fff"},{"id":"t","type":"text","text":"SALE","x":40,"y":40,"fontSize":64,"color":"#e11"}]'></textarea></label>
+        <button class="btn gold" id="poster-render">${t('poster.render')}</button>
+        <button class="btn ghost" id="poster-estimate">${t('poster.estimate')}</button>
         <div id="poster-result" class="hint" style="margin-top:12px"></div>
         <div id="poster-preview" style="margin-top:12px"></div>
       </section>
       <section class="panel">
-        <h3>Job Actions</h3>
-        <p class="hint">SSE events, cancel/reroll, batch review.</p>
-        <label>Job ID<input id="act-jobid" placeholder="job-abc123" /></label>
+        <h3>${t('poster.jobActions')}</h3>
+        <p class="hint">${t('poster.jobActionsHint')}</p>
+        <label>${t('poster.jobId')}<input id="act-jobid" placeholder="job-abc123" /></label>
         <div class="row" style="margin:8px 0">
-          <button class="btn ghost small" id="act-sse">Subscribe SSE</button>
-          <button class="btn ghost small" id="act-cancel">Cancel</button>
-          <button class="btn ghost small" id="act-reroll">Reroll</button>
-          <button class="btn ghost small" id="act-reroute">Reroute</button>
+          <button class="btn ghost small" id="act-sse">${t('poster.sse')}</button>
+          <button class="btn ghost small" id="act-cancel">${t('poster.cancel')}</button>
+          <button class="btn ghost small" id="act-reroll">${t('poster.reroll')}</button>
+          <button class="btn ghost small" id="act-reroute">${t('poster.reroute')}</button>
         </div>
         <div id="sse-log" class="code" style="max-height:200px;overflow:auto;font-size:11px"></div>
-        <h3 style="margin-top:18px">Batch Export</h3>
-        <label>Batch ID<input id="exp-batchid" placeholder="batch-001" /></label>
-        <label>Boards (comma-sep)<input id="exp-boards" value="main_1x1,detail_3x4" /></label>
-        <label>Formats<input id="exp-fmts" value="png,webp" /></label>
-        <button class="btn gold" id="exp-submit">Export</button>
+        <h3 style="margin-top:18px">${t('poster.batchExport')}</h3>
+        <label>${t('poster.batchId')}<input id="exp-batchid" placeholder="batch-001" /></label>
+        <label>${t('poster.boards')}<input id="exp-boards" value="main_1x1,detail_3x4" /></label>
+        <label>${t('poster.fmts')}<input id="exp-fmts" value="png,webp" /></label>
+        <button class="btn gold" id="exp-submit">${t('poster.export')}</button>
         <div id="exp-result" class="hint" style="margin-top:8px"></div>
-        <h3 style="margin-top:18px">Batch Review</h3>
-        <textarea id="review-items" rows="4" placeholder='[{"jobId":"j1","verdict":"pass"},{"jobId":"j2","verdict":"reject","reasonCode":"E1"}]'></textarea>
-        <button class="btn gold" id="review-submit">Submit Review</button>
+        <h3 style="margin-top:18px">${t('poster.batchReview')}</h3>
+        <textarea id="review-items" rows="4" placeholder='${t('poster.reviewPh')}'></textarea>
+        <button class="btn gold" id="review-submit">${t('poster.reviewSubmit')}</button>
         <div id="review-result" class="hint" style="margin-top:8px"></div>
       </section>
     </div>
