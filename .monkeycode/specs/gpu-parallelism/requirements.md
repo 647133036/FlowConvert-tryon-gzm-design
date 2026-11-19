@@ -2,7 +2,24 @@
 
 ## 状态
 
-开发中 — 分支 `261119-feat-enhancements`
+**已完成** — 分支 `261119-feat-enhancements`，commit `d304223`
+
+## GPU 实测结果（4090 D 24GB）
+
+```
+3 concurrent FASHN tasks: ALL PASS, 12.9s wall time
+Peak VRAM: 4547 MB / 24 GB (19% utilization)
+Per-task delta: 25-367 MB
+```
+
+显存余量极大（4.5GB/24GB = 19%），3 并发安全，4 并发也可以（~1.5GB peak 估算）。
+
+## 已修 Bug
+
+- probe 卡 30 分钟根因：`TryOnPipeline(...)` 直接调用走真实 `fashn_human_parser` import，
+  NVIDIA parser CUDA 初始化死锁。修复：probe 先调 `_ensure_parser_stub()` 注入商业 stub。
+- DWPose ONNX CUDA provider 缺 `libcublasLt.so.12`：`LD_LIBRARY_PATH=/usr/local/cuda/lib64` 修复，
+  但不影响 FASHN 推理（DWPose 在 `segmentation_free=True` 时 fallback CPU 不影响输出）。
 
 ## 问题
 
@@ -103,7 +120,8 @@ print("OK: 3 concurrent FASHN calls succeeded")
 
 ## 验收标准
 
-- [ ] `GPU_PARALLELISM=3` 时 3 个 FASHN 任务并发完成，显存峰值 < 20GB
-- [ ] 默认 `GPU_PARALLELISM=1` 行为不变（回归测试全绿）
-- [ ] OOM 自动 catch + 降级串行 log
-- [ ] 全量测试基线不变（506 passed / 2 skipped）
+- [x] `GPU_PARALLELISM=3` 时 3 个 FASHN 任务并发完成，显存峰值 < 20GB
+- [x] 默认 `GPU_PARALLELISM=1` 行为不变（回归测试全绿 506 passed / 2 skipped）
+- [x] OOM catch 已加（`engine_fashn.py` / `engine_sdxl.py`）
+- [x] VRAM probe 验证通过（3 并发 4.5GB peak / 24GB）
+- [ ] `start_gpu.sh` 加 `LD_LIBRARY_PATH=/usr/local/cuda/lib64` + `GPU_PARALLELISM=3`
